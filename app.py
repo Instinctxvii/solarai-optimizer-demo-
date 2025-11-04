@@ -65,4 +65,30 @@ with col1:
     st.markdown("""
     ### **How to Use This Demo (Easy as 1-2-3!)**
 
-    1. **Look at the graph**
+    1. **Look at the graph**  
+       → It shows **how much sunlight your solar panels will get** for the next **14 days**, hour by hour.
+
+    2. **Find the best time**  
+       → The AI picks the **sunniest 2 hours** of the day.  
+       → That's when you should turn on your **geyser, fridge, or charge your battery**.
+
+    3. **Click "Simulate Charge Now"**  
+       → Pretends to turn on your geyser at the perfect time.  
+       → Saves you money and makes your battery last longer!
+
+    **Why no zoom?** So everyone sees the **full 14-day plan** — just like in real life.  
+    **Accidentally moved it?** Click **"Reset Graph View"** to fix it.  
+    **Made a code change?** Click **"Refresh Demo"** at the top!
+    """)
+
+with col2:
+    st.subheader("Live AI Insights")
+    st.metric("Best Time to Charge", best_time)
+    st.metric("Weekly Money Saved", "R187", delta="+R42")
+    st.metric("Battery Health", "94%", delta="+2%")
+    
+    if st.button("Simulate Charge Now", type="primary"):
+        st.success(f"Geyser ON at {best_time}! Saving you R187 this week.")
+
+st.info(f"AI says: **Charge at {best_time} today** for free solar power!")
+st.caption("Built with a R1,200 Raspberry Pi + AI | R99/month | Contact: [Your Email]")
