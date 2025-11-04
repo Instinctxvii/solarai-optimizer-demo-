@@ -97,32 +97,4 @@ if 'graph_relayout' not in st.session_state:
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("14-Day Solar Yield Forecast")
-    
-    fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
-                  title=f"GHI — {loc['name']} (Free Satellite Data)",
-                  labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
-    fig.update_layout(height=400, margin=dict(l=40, r=40, t=40, b=40))
-    
-    config = {
-        'displayModeBar': True,
-        'modeBarButtonsToRemove': ['zoom', 'pan', 'zoomIn', 'zoomOut', 'autoScale'],
-        'displaylogo': False
-    }
-    
-    if st.session_state.graph_relayout:
-        fig.update_layout(st.session_state.graph_relayout)
-
-    st.plotly_chart(fig, use_container_width=True, config=config, key="solar_chart")
-
-    if st.button("Reset Graph View", type="secondary"):
-        st.session_state.graph_relayout = None
-        st.success("Graph reset!")
-        st.rerun()
-
-    st.markdown("""
-### **How to Use (Easy as 1-2-3!)**
-
-1. **Pick a location** → See real sunlight forecast  
-2. **Enter your system** → Get **exact R saved**  
-3. **Click "Simulate Charge"** → AI turns on
+    st.subheader("14
