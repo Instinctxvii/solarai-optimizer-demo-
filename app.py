@@ -124,19 +124,14 @@ fig.update_layout(
     margin=dict(l=30, r=30, t=60, b=40),
     title_x=0.5,
     hovermode="x unified",
-    xaxis=dict(
-        showgrid=True,
-        gridwidth=0.3,
-        gridcolor="rgba(180,180,180,0.3)",
-    ),
+    xaxis=dict(showgrid=True, gridwidth=0.3, gridcolor="rgba(180,180,180,0.3)"),
     yaxis=dict(showgrid=True, gridwidth=0.3, gridcolor="rgba(180,180,180,0.3)"),
 )
 
-# Enable zoom/pan/reset toolbar
 config = {
     "displayModeBar": True,
     "displaylogo": False,
-    "modeBarButtonsToRemove": ["select2d", "lasso2d"]
+    "modeBarButtonsToRemove": ["select2d", "lasso2d"],
 }
 
 # === MAIN LAYOUT ===
