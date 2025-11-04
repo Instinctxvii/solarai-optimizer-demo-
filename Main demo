@@ -1,0 +1,48 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from datetime import datetime, timedelta
+
+st.set_page_config(page_title="SolarAI Optimizer", layout="wide")
+st.title("⚡ SolarAI Optimizer™")
+st.markdown("**AI-Powered Solar Intelligence | Soweto Demo | R99/month**")
+
+# Generate demo solar data (14 days hourly)
+def generate_solar_data():
+    now = datetime.now()
+    index = pd.date_range(now, periods=336, freq='H')  # 14 days
+    hours = index.hour
+    seasonal = 1.2 if now.month in [11,12,1,2] else 0.8  # SA summer
+    ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
+    return pd.DataFrame({'ghi': ghi}, index=index).resample('H').mean()
+
+df = generate_solar_data().reset_index()
+df.columns = ['Time', 'Solar Yield (W/m²)']
+
+# Predict optimal charge time (next 24h best window)
+next_24h = df.head(24)
+best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
+best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+
+# Layout
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader("14-Day Solar Yield Forecast")
+    fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
+                  title="Global Horizontal Irradiance (W/m²)",
+                  labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
+    fig.update_layout(height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+with col2:
+    st.subheader("Live AI Insights")
+    st.metric("Optimal Charge Time", best_time)
+    st.metric("Estimated Weekly Savings", "R187", delta="+R42")
+    st.metric("Battery Efficiency", "94%", delta="+2%")
+    if st.button("Simulate Charge Now", type="primary"):
+        st.success("✅ Relay activated! SMS sent: 'Charge NOW — 85% yield in 2 hours. Reply OK.'")
+
+st.info(f"📱 **Demo SMS Alert**: Charge at **{best_time}** for maximum yield. (Raspberry Pi + AI)")
+st.caption("👉 Full code: This repo | Built for South African townships | Contact: [Your Email]")
