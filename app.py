@@ -1,196 +1,247 @@
-# === SolarAI Optimizer™ (Complete, Fixed, Polished) ===
+# SolarAI Optimizer™ — Simple Demo (consumer-friendly)
+# Copy this file into app.py and run: streamlit run app.py
+
 import streamlit as st
 import pandas as pd
 import numpy as np
-import datetime as dt
 import plotly.express as px
+from datetime import datetime, timedelta, time as dtime
 
-# ======================================================
-# === 🌞 APP CONFIG ===
-# ======================================================
-st.set_page_config(
-    page_title="☀️ SolarAI Optimizer™",
-    page_icon="☀️",
-    layout="wide"
+st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
+
+# -------------------------
+# UI (simple)
+# -------------------------
+st.title("☀️ SolarAI Optimizer™")
+st.markdown("AI-powered solar suggestions — simple, friendly, and practical.")
+
+st.markdown("### 1) Tell us about your home (quick)")
+col1, col2, col3 = st.columns(3)
+household_size = col1.selectbox("Household size", options=[1,2,3,4,5,6], index=2, help="Number of people living in home")
+has_geyser = col2.checkbox("Do you have an electric geyser?", value=True)
+cook_electric = col3.checkbox("Do you cook with electricity (stove/plate)?", value=False)
+
+col4, col5 = st.columns(2)
+panel_kw = col4.slider("Solar panel system (approx. peak kW)", 1.0, 10.0, 5.0, 0.5)
+battery_kwh = col5.slider("Battery size (kWh) — approximate usable capacity", 1.0, 30.0, 2.4, 0.1,
+                          help="Enter the battery usable energy in kWh (e.g. 200Ah@12V ≈ 2.4 kWh)")
+
+st.markdown("### 2) Schedule & loadshedding")
+arrival_time = st.time_input("What time do you usually arrive home?", value=dtime(17,0))
+# assumed loadshedding start shortly after arrival (common), allow editing
+ls_hours = st.slider("Expected loadshedding duration (hours)", 1, 24, 6)
+ls_start_offset_min = st.number_input("If loadshedding typically starts minutes after you arrive (e.g. 10):", 0, 120, 10)
+
+st.markdown("Optional: paste Solcast API key in sidebar to use live forecasts (demo data used otherwise).")
+
+# Advanced (hidden) — show if user wants
+with st.expander("Advanced (for power users) — internal assumptions (click to view)"):
+    st.write("""
+    These assumptions are internal to the demo:
+    - Inverter efficiency = 90%  
+    - Charger efficiency = 95%  
+    - Reserve battery kept = 10% (we don't recommend fully draining battery)  
+    - Average per-person baseline evening consumption estimated automatically (see below)
+    """)
+
+# -------------------------
+# Forecast (demo synthetic; optional Solcast)
+# -------------------------
+solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password")
+# For demo we generate hourly synthetic 48-hour forecast centered on today
+now = datetime.now().replace(minute=0, second=0, microsecond=0)
+start = now - timedelta(hours=24)
+hours = pd.date_range(start, start + timedelta(hours=48), freq="1h")
+# synthetic GHI pattern (0..1000-ish)
+hours_float = hours.hour + hours.minute/60.0
+seasonal = 1.0  # keep neutral
+ghi = np.maximum(0, 900 * np.sin((hours_float - 6) * np.pi / 12) * seasonal + np.random.normal(0, 40, len(hours)))
+df = pd.DataFrame({"Time": hours, "GHI": ghi})
+# approximate instantaneous solar power (kW) = (GHI/1000) * panel_kw * system_efficiency(0.85)
+df["Power_kW"] = (df["GHI"] / 1000.0) * panel_kw * 0.85
+
+# If user supplied solcast_key, we could call API (omitted here because demo offline), but keep placeholder
+if solcast_key:
+    st.sidebar.success("Solcast key provided — in production this would enable live forecasts.")
+
+# -------------------------
+# Internal estimates (consumer-friendly)
+# -------------------------
+# Estimate evening baseline load (lights, fridge, wifi, phone) from household size
+# Use simple rules: baseline per person ~0.35 kW evening average (lights, devices), fridge ~0.15 kW
+per_person_evening = 0.35  # kW
+fridge_kW_avg = 0.15
+phone_kW = 0.05
+tv_kW = 0.10
+wifi_kW = 0.02
+cooking_kW = 1.2 if cook_electric else 0.0
+# Evening baseline = per person * household_size + fridge + tv + wifi + phone
+evening_baseline_kw = household_size * per_person_evening + fridge_kW_avg + tv_kW + wifi_kW + phone_kW + cooking_kW
+
+# Geyser defaults (consumer-friendly)
+geyser_power_kw = 3.0 if has_geyser else 0.0
+geyser_duration_h = 1.5 if has_geyser else 0.0
+
+# internal efficiencies (not shown in UI unless expanded)
+INVERTER_EFF = 0.90
+CHARGER_EFF = 0.95
+RESERVE_FRACTION = 0.10  # keep 10% buffer of battery total
+
+# -------------------------
+# Find best peak (AI simple heuristic = highest GHI near midday)
+# -------------------------
+# Use next day's peak: find maximum GHI in the next 24-hour window starting today midnight
+today_mid = now.replace(hour=0)
+window = df[(df["Time"] >= today_mid) & (df["Time"] < today_mid + timedelta(days=1))]
+peak_row = window.loc[window["GHI"].idxmax()]
+peak_time = peak_row["Time"]
+peak_power_kw = float(peak_row["Power_kW"])
+
+# -------------------------
+# Simulate charging from peak until arrival time
+# -------------------------
+# We'll simulate hourly steps between peak_time and arrival_time (today's arrival) to estimate battery SoC at arrival
+# For clarity we assume geyser is heated at peak_time (if user has geyser) and consumes energy immediately (so battery may be used)
+# Timeline:
+#  - At peak_time: optionally schedule geyser to run and consume geyser_energy (we assume AI chooses to heat at peak if beneficial)
+#  - After geyser run, remaining solar charges battery until arrival_time
+arrive_dt = datetime.combine(now.date(), arrival_time)
+# if arrival before peak (rare) assume peak happens earlier same day; use next peak:
+if arrive_dt <= peak_time:
+    # use next peak (peak in the window after arrival)
+    window_after = df[(df["Time"] >= arrive_dt) & (df["Time"] < arrive_dt + timedelta(hours=24))]
+    if not window_after.empty:
+        peak_row = window_after.loc[window_after["GHI"].idxmax()]
+        peak_time = peak_row["Time"]
+        peak_power_kw = float(peak_row["Power_kW"])
+
+# battery capacity kWh is given
+battery_total_kwh = battery_kwh
+battery_usable_kwh = battery_total_kwh * (1.0 - RESERVE_FRACTION)
+
+# Start simulation: battery state before peak — assume some initial moderate SoC (50%) unless battery is charged in day:
+# To keep demo simple and helpful, assume morning battery SoC is 40% (typical after night)
+initial_soc_frac = 0.40
+battery_energy = battery_total_kwh * initial_soc_frac
+
+# If geyser heats at peak, subtract geyser consumption from either direct solar (preferred) or battery
+def simulate_charge_and_geyser(df, peak_time, geyser_on, geyser_kw, geyser_h, battery_energy_kwh):
+    """Simulates one-hour steps after peak_time to arrival, returns battery energy at arrival (kWh) and details."""
+    # copy df and start from peak_time
+    future = df[df["Time"] >= peak_time].copy().reset_index(drop=True)
+    # we'll simulate until arrival_dt (if arrival before last sample, stop)
+    battery = battery_energy_kwh
+    timeline = []
+    # step through rows until arrival
+    for i in range(len(future)):
+        t = future.loc[i, "Time"]
+        if t >= arrive_dt:
+            break
+        # determine step duration to next row (hours)
+        if i < len(future) - 1:
+            step_h = (future.loc[i+1, "Time"] - future.loc[i, "Time"]).total_seconds() / 3600.0
+            if step_h <= 0:
+                step_h = 1.0
+        else:
+            step_h = 1.0
+        prod_kwh = float(future.loc[i, "Power_kW"]) * step_h
+        # first, if geyser_on and this is within the geyser window starting at peak_time, consume geyser energy
+        geyser_out_kwh = 0.0
+        if geyser_on:
+            # try to allocate geyser schedule starting at peak_time for geyser_h hours
+            # simple approach: if t >= peak_time and t < peak_time + geyser_h -> geyser running now
+            if (t >= peak_time) and (t < peak_time + timedelta(hours=geyser_h)):
+                geyser_out_kwh = geyser_kw * step_h
+        # net production after meeting instant household baseline during daytime (we assume daytime baseline small)
+        # in demo we assume daytime household draw is small compared to evening; we ignore daytime household draw for simplicity
+        net_surplus = max(0.0, prod_kwh - geyser_out_kwh)
+        # storeable energy after charger efficiency
+        store_kwh = net_surplus * CHARGER_EFF
+        # charge battery up to max
+        battery = min(battery_total_kwh, battery + store_kwh)
+        timeline.append({"Time": t, "prod_kwh": prod_kwh, "geyser_out_kwh": geyser_out_kwh, "battery_kwh": battery})
+    return battery, timeline
+
+# Decide AI: heat geyser at peak if user has geyser — simplified heuristic: if peak power >= geyser_kw*0.8 then yes
+heat_at_peak = False
+if has_geyser and (peak_power_kw >= geyser_power_kw*0.8):
+    heat_at_peak = True
+
+battery_after_arrival, timeline = simulate_charge_and_geyser(
+    df=df,
+    peak_time=peak_time,
+    geyser_on=heat_at_peak,
+    geyser_kw=geyser_power_kw,
+    geyser_h=geyser_duration_h,
+    battery_energy_kwh=battery_energy,
 )
 
-st.title("☀️ **SolarAI Optimizer™**")
-st.markdown("**AI-Powered Solar Intelligence | R99/month**")
+# -------------------------
+# Estimate available runtime during loadshedding (starting arrival + offset)
+# -------------------------
+ls_start = datetime.combine(arrive_dt.date(), arrival_time) + timedelta(minutes=ls_start_offset_min)
+usable_at_ls = max(0.0, battery_after_arrival - battery_total_kwh * RESERVE_FRACTION)  # already applied reserve
+# inverter losses: runtime = usable_at_ls * inverter_eff / evening_load
+evening_load = evening_baseline_kw
+if has_geyser:
+    # If geyser would be turned on during loadshedding, add to evening load (but typically geyser is hot from earlier)
+    # We assume geyser not run during evening loadshedding unless user triggers it.
+    pass
 
-# ======================================================
-# === ⚙️ INPUT SECTIONS ===
-# ======================================================
-
-with st.expander("## ⚙️ System, Battery & Loads", expanded=True):
-    st.subheader("### ⚙️ Your Solar System")
-    col1, col2, col3 = st.columns(3)
-    panel_kw = col1.number_input("Panel Size (kW)", 0.5, 20.0, 5.0, 0.5)
-    daily_usage = col2.number_input("Daily Usage (hours)", 1, 24, 6)
-    elec_cost = col3.number_input("Electricity Cost (R/kWh)", 0.5, 10.0, 2.5)
-
-    st.text_input("Solcast API Key (optional)")
-
-    st.subheader("### 🔋 Battery & Inverter")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    battery_capacity = c1.number_input("Battery Capacity (Ah)", 50, 2000, 200)
-    battery_voltage = c2.number_input("Battery Nominal Voltage (V)", 12, 96, 48)
-    soc_now = c3.slider("Current Battery SoC (%)", 0, 100, 50)
-    inverter_eff = c4.slider("Inverter Efficiency (%)", 70, 98, 90)
-    charger_eff = c5.slider("Charger Efficiency (%)", 70, 98, 95)
-    reserve_soc = st.slider("Reserve SoC (%) — keep this much as buffer", 0, 50, 10)
-
-    st.subheader("### ⚡ Geyser")
-    g1, g2, g3 = st.columns(3)
-    geyser_kw = g1.number_input("Geyser Power (kW)", 1.0, 5.0, 3.0)
-    geyser_hours = g2.number_input("Geyser Duration (hours)", 0.5, 5.0, 1.5)
-    geyser_use_during_loadshedding = g3.checkbox("Allow geyser during loadshedding?", False)
-
-    st.subheader("### 🏠 Household Loads")
-    h1, h2, h3, h4 = st.columns(4)
-    base_load_kw = h1.number_input("Baseline load (lights/fridge/etc.) (kW)", 0.1, 3.0, 0.6)
-    fridge_kw = h2.number_input("Fridge (kW) estimate (peak)", 0.05, 1.0, 0.25)
-    phone_kw = h3.number_input("Phone charging (kW)", 0.01, 1.0, 0.1)
-    cooking_kw = h4.number_input("Cooking (kW)", 0.1, 5.0, 1.0)
-
-    st.subheader("### ⏱️ Loadshedding Scenario")
-    l1, l2 = st.columns(2)
-    shedding_hours = l1.number_input("Expected loadshedding duration (hours)", 2, 24, 6)
-    safety_margin = l2.slider("Sizing safety margin (%)", 0, 100, 20)
-
-# ======================================================
-# === 🌍 LOCATION SELECTION ===
-# ======================================================
-st.subheader("### 🌍 Select Location")
-location = st.radio("Choose location:", ["📍 Limpopo (Polokwane)", "🌞 Nelspruit (Mbombela)"])
-if location.startswith("📍"):
-    loc = {"name": "Limpopo (Polokwane)", "lat": -23.9, "lon": 29.45}
+# runtime hours
+if evening_load <= 0:
+    runtime_hours = 0.0
 else:
-    loc = {"name": "Nelspruit (Mbombela)", "lat": -25.47, "lon": 30.98}
+    runtime_hours = (usable_at_ls * INVERTER_EFF) / evening_load
 
-if st.button("🔄 Reset / Refresh"):
-    st.rerun()
-
-st.markdown(f"**📡 Current Location:** {loc['name']}")
-
-# ======================================================
-# === GENERATE SOLAR FORECAST (Mock) ===
-# ======================================================
-now = dt.datetime.now().replace(minute=0, second=0, microsecond=0)
-times = [now - dt.timedelta(hours=12) + dt.timedelta(hours=i) for i in range(0, 49)]
-
-solar_yield = [max(0, np.sin((t.hour - 6) / 12 * np.pi) * 900 + np.random.uniform(-50, 50)) for t in times]
-df = pd.DataFrame({"Time": times, "Solar Yield (W/m²)": solar_yield})
-df["Power_kW"] = (df["Solar Yield (W/m²)"] / 1000) * panel_kw * 0.8  # 80% system efficiency
-
-# ======================================================
-# === 🔍 AI LOGIC FOR NEXT BEST GEYSER TIME ===
-# ======================================================
-def find_next_run_with_loads(forecast_df, battery_capacity, battery_voltage,
-                             soc_now, reserve_soc, inverter_eff,
-                             geyser_kw, geyser_hours,
-                             base_load_kw, fridge_kw, phone_kw, cooking_kw,
-                             allow_geyser_during_loadshedding):
-    # Total battery energy available in kWh
-    usable_kwh = (battery_capacity * battery_voltage / 1000) * ((soc_now - reserve_soc) / 100)
-    total_load = base_load_kw + fridge_kw + phone_kw + cooking_kw
-    forecast_df = forecast_df.copy()
-    forecast_df["Available_kW"] = forecast_df["Power_kW"] * (inverter_eff / 100)
-
-    # Best geyser run time where solar + battery > total loads
-    for i in range(len(forecast_df)):
-        prod_kw = forecast_df.loc[i, "Available_kW"]
-        if prod_kw > (total_load + geyser_kw * 0.9):
-            next_time = forecast_df.loc[i, "Time"]
-            return next_time, {
-                "available_power_kw": round(prod_kw, 2),
-                "total_load_kw": round(total_load, 2),
-                "battery_kwh": round(usable_kwh, 2)
-            }
-
-    # If nothing found, fall back to when battery can supply it
-    if usable_kwh > geyser_kw * geyser_hours:
-        return now + dt.timedelta(hours=1), {
-            "available_power_kw": round(0, 2),
-            "total_load_kw": round(total_load, 2),
-            "battery_kwh": round(usable_kwh, 2)
-        }
-    return None, None
-
-next_time, details = find_next_run_with_loads(
-    forecast_df=df,
-    battery_capacity=battery_capacity,
-    battery_voltage=battery_voltage,
-    soc_now=soc_now,
-    reserve_soc=reserve_soc,
-    inverter_eff=inverter_eff,
-    geyser_kw=geyser_kw,
-    geyser_hours=geyser_hours,
-    base_load_kw=base_load_kw,
-    fridge_kw=fridge_kw,
-    phone_kw=phone_kw,
-    cooking_kw=cooking_kw,
-    allow_geyser_during_loadshedding=geyser_use_during_loadshedding
-)
-
-# Battery sizing suggestion
-total_kwh_needed = (base_load_kw + fridge_kw + phone_kw + cooking_kw + geyser_kw) * shedding_hours * (1 + safety_margin/100)
-suggested_ah = (total_kwh_needed * 1000) / battery_voltage
-if suggested_ah > battery_capacity:
-    st.warning(f"💡 Your 200 Ah battery may be too small for {shedding_hours} h outages. Suggested: **{int(suggested_ah)} Ah** or more.")
-
-# ======================================================
-# === GRAPH (Smooth + Slider + Hourly Labels) ===
-# ======================================================
-fig = px.line(
-    df,
-    x="Time",
-    y="Solar Yield (W/m²)",
-    title=f"☀️ Global Horizontal Irradiance — {loc['name']} (24 Hours View)",
-    labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Hour of Day"},
-)
-
-fig.update_traces(
-    line=dict(color="rgba(0, 123, 255, 0.6)", width=3),
-    mode="lines+markers",
-    marker=dict(size=7, color="rgba(0, 123, 255, 0.8)", line=dict(width=1, color="white")),
-    hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.0f} W/m²<extra></extra>",
-    line_shape="spline"
-)
-
-fig.update_layout(
-    height=460,
-    margin=dict(l=30, r=30, t=60, b=60),
-    title_x=0.5,
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    hovermode="x unified",
-    xaxis=dict(
-        dtick=3600000 * 3,  # every 3 hours
-        tickformat="%H:%M",
-        rangeslider=dict(visible=True, bgcolor="rgba(240,240,255,0.5)", thickness=0.05),
-        showgrid=False,
-        tickfont=dict(size=13),
-    ),
-    yaxis=dict(
-        showgrid=True,
-        gridcolor="rgba(200,200,200,0.3)",
-        zeroline=False,
-        tickfont=dict(size=13),
-    ),
-    dragmode="pan"
-)
-
-config = {"displayModeBar": True, "scrollZoom": True}
-
-st.plotly_chart(fig, use_container_width=True, config=config)
-
-# ======================================================
-# === 🔆 RESULTS ===
-# ======================================================
-st.subheader("### 🔆 Solar Yield Forecast")
-if next_time:
-    st.success(f"✅ **Optimal geyser run time:** {next_time.strftime('%H:%M')} — "
-               f"Available Power: {details['available_power_kw']} kW | "
-               f"Battery Energy: {details['battery_kwh']} kWh")
+# If runtime < expected loadshedding, recommend larger battery
+if runtime_hours < ls_hours:
+    # simple recommended total kWh = evening_load * ls_hours / inverter_eff, then add reserve and margin
+    required_batt_for_ls_kwh = (evening_load * ls_hours) / INVERTER_EFF
+    # add reserve fraction and small safety margin 10%
+    recommended_total_kwh = required_batt_for_ls_kwh / (1.0 - RESERVE_FRACTION) * 1.1
+    recommended_total_kwh = round(recommended_total_kwh, 1)
 else:
-    st.error("No suitable solar window found — consider increasing battery or shifting loads.")
+    recommended_total_kwh = None
+
+# -------------------------
+# Present simplified outputs to user
+# -------------------------
+st.markdown("## Results — simple, helpful summary")
+
+colA, colB = st.columns(2)
+with colA:
+    st.subheader("Best solar window (AI)")
+    st.write(f"**Peak solar detected:** {peak_time.strftime('%a %d %b %I:%M %p')}  — expected panel output around **{peak_power_kw:.2f} kW** at peak.")
+    if heat_at_peak:
+        st.success(f"AI would pre-heat your geyser at that peak (approx {geyser_duration_h} h of heating).")
+    else:
+        st.info("AI did not schedule geyser heating at peak automatically (insufficient solar).")
+
+    st.markdown("---")
+    st.subheader("Estimated battery at arrival")
+    st.write(f"Assumed morning SoC: 40% (demo).")
+    st.write(f"Estimated battery after solar & geyser at {arrival_time.strftime('%H:%M')}: **{battery_after_arrival:.2f} kWh** total.")
+    st.write(f"Usable (after 10% reserve): **{usable_at_ls:.2f} kWh**.")
+
+with colB:
+    st.subheader("Evening load & backup estimate")
+    st.write(f"Estimated evening household load (lights, TV, Wi-Fi, phones{', cooking' if cook_electric else ''}): **{evening_load:.2f} kW**.")
+    st.write(f"If loadshedding starts at {ls_start.strftime('%I:%M %p')}, estimated backup runtime: **{runtime_hours:.2f} hours** ({int(runtime_hours*60)} minutes).")
+    if recommended_total_kwh:
+        st.warning(f"To cover {ls_hours} hours you would need ~**{recommended_total_kwh} kWh** battery capacity (total).")
+    else:
+        st.success("Your battery appears sufficient for the expected outage length.")
+
+st.markdown("---")
+st.subheader("Graph — forecast & slider")
+fig = px.line(df[(df["Time"] >= today_mid) & (df["Time"] < today_mid + timedelta(days=1))],
+              x="Time", y="GHI",
+              labels={"GHI": "Global Horizontal Irradiance (W/m²)"},
+              title="Forecast (24 hours)")
+fig.update_layout(xaxis=dict(dtick=3600000, tickformat="%H:%M", rangeslider=dict(visible=True)))
+st.plotly_chart(fig, use_container_width=True)
+
+st.markdown("---")
+st.info("This demo keeps the UI simple for homeowners. If you'd like the full technical breakdown (Ah, voltages, charge/discharge efficiencies), open 'Advanced' at the top.")
+st.caption("Estimates are illustrative. For precise system design consult a solar installer or an electrician.")
