@@ -4,7 +4,6 @@ import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
 import requests
-import time
 
 # === PAGE CONFIG ===
 st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
@@ -43,7 +42,6 @@ st.markdown(f"**📡 Current Location:** {loc['name']}")
 # === FETCH DATA ===
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.DataFrame:
-    """Return solar irradiance (GHI) forecast for 14 days (hourly)."""
     try:
         if api_key and api_key != "demo":
             url = (
@@ -60,7 +58,7 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
     except Exception:
         st.warning("⚠️ API unavailable — using demo data.")
 
-    # === Demo synthetic data ===
+    # demo synthetic data
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
     index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="1h")
     hours = index.hour + index.minute / 60
@@ -105,7 +103,7 @@ saved_r = saved_kwh * tariff_per_kwh
 best_idx = df_view["Solar Yield (W/m²)"].idxmax()
 best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
 
-# === GRAPH (Clean hourly + slider + fade) ===
+# === GRAPH (3-hour ticks + slider) ===
 fig = px.line(
     df_view,
     x="Time",
@@ -122,19 +120,20 @@ fig.update_traces(
 )
 fig.update_layout(
     height=480,
-    width=1000,
-    margin=dict(l=30, r=30, t=60, b=70),
+    width=1050,
+    margin=dict(l=30, r=30, t=60, b=80),
     title_x=0.5,
     plot_bgcolor="white",
     paper_bgcolor="white",
     hovermode="x unified",
+    transition_duration=800,  # smooth fade-in / redraw
     xaxis=dict(
         tickformat="%H:%M",
-        dtick=3600000,  # 1-hour interval
+        dtick=3 * 3600000,       # 3-hour interval
         showgrid=False,
-        tickangle=0,
         tickfont=dict(size=13),
-        rangeslider=dict(visible=True, thickness=0.07),  # 👈 X-axis slider
+        rangeslider=dict(visible=True, thickness=0.07),
+        range=[start_of_day, end_of_day],
         automargin=True,
     ),
     yaxis=dict(
@@ -144,14 +143,6 @@ fig.update_layout(
     ),
 )
 
-# === FADE-IN ANIMATION ===
-graph_placeholder = st.empty()
-for opacity in np.linspace(0.1, 1.0, 10):
-    temp_fig = fig
-    temp_fig.update_traces(line=dict(color=f"rgba(0,123,255,{opacity})"))
-    graph_placeholder.plotly_chart(temp_fig, use_container_width=True, config={"displayModeBar": True})
-    time.sleep(0.05)
-
 # === MAIN LAYOUT ===
 col1, col2 = st.columns([1.8, 1.2], gap="large")
 
@@ -160,10 +151,9 @@ with col1:
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
     st.markdown("""
 **📘 Reading the Graph**
-- **X-axis:** Time (hourly from midnight → midnight)  
+- **X-axis:** Time (hourly, every 3 h shown by default)  
 - **Y-axis:** Sunlight intensity (W/m²)  
-- **Blue curve:** Forecasted sunlight  
-- Use the **slider below** to zoom or pan.
+- Use the **slider below** to zoom to 2 h or 1 h windows for fine detail.
     """)
 
 with col2:
@@ -171,7 +161,6 @@ with col2:
     st.metric("Best Time to Charge", best_time)
     st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
     st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"≈ R{saved_r/14:.0f}/day")
-
     if st.button("⚡ Simulate Charge Now", use_container_width=True):
         st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f}.")
 
