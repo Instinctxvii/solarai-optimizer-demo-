@@ -18,13 +18,13 @@ with col_loc2:
 if "location" not in st.session_state:
     st.session_state.location = "limpopo"
 
-# === REFRESH ===
+# === REFRESH BUTTON ===
 if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
     st.success("Refreshing... Page will reload in 2 seconds.")
     st.rerun()
 
 st.title("SolarAI Optimizer™")
-st.markdown("**AI-Powered Solar Intelligence | R99 / month**")
+st.markdown("**AI-Powered Solar Intelligence | R99/month**")
 
 # === LOCATION COORDINATES ===
 locations = {
@@ -37,8 +37,7 @@ st.markdown(f"**Current Location:** {loc['name']}")
 # === FETCH DATA ===
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.DataFrame:
-    """Return hourly (or half-hourly) GHI forecast for 14 days.  
-    Falls back to demo data when no API key is supplied."""
+    """Return solar irradiance (GHI) forecast for 14 days (hourly)."""
     try:
         if api_key and api_key != "demo":
             url = (
@@ -55,9 +54,9 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
     except Exception as e:
         st.warning(f"API unavailable → using demo data ({e})")
 
-    # Demo synthetic data: every 30 minutes for 14 days
+    # === Demo synthetic data (hourly for 14 days) ===
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
-    index = pd.date_range(now - timedelta(hours=12), periods=24 * 14 * 2, freq="30min")
+    index = pd.date_range(now - timedelta(hours=12), periods=24 * 14, freq="h")
     hours = index.hour + index.minute / 60
     seasonal = 1.2 if now.month in [11, 12, 1, 2] else 0.8
     ghi = np.maximum(
@@ -74,26 +73,25 @@ hours_used_per_day = st.sidebar.slider("Daily Usage (hours)", 4, 12, 6)
 tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2.5)
 solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password")
 
-# === GET DATA ===
+# === FETCH FORECAST DATA ===
 df = get_solcast_forecast(loc["lat"], loc["lon"], api_key=solcast_key)
 
-# === VIEW TOGGLE ===
+# === VIEW TOGGLE (only 24h or 14 days) ===
 view_mode = st.radio(
     "Select View:",
-    ["Today Only", "Yesterday", "24 Hours (rolling)", "14-Day Forecast"],
+    ["24 Hours (Today)", "14-Day Forecast"],
     horizontal=True,
 )
 
+# === PREPARE VIEW ===
 now = datetime.now()
 today = now.date()
-yesterday = today - timedelta(days=1)
+start_of_day = datetime.combine(today, datetime.min.time())
+end_of_day = start_of_day + timedelta(days=1)
 
-if view_mode == "Today Only":
-    df_view = df[df["Time"].dt.date == today]
-elif view_mode == "Yesterday":
-    df_view = df[df["Time"].dt.date == yesterday]
-elif view_mode == "24 Hours (rolling)":
-    df_view = df[(df["Time"] > now - timedelta(hours=24)) & (df["Time"] <= now)]
+if view_mode == "24 Hours (Today)":
+    # Show from midnight today to midnight tomorrow
+    df_view = df[(df["Time"] >= start_of_day) & (df["Time"] < end_of_day)]
 else:
     df_view = df.copy()
 
@@ -126,25 +124,29 @@ config = {"displayModeBar": False, "displaylogo": False}
 
 # === MAIN LAYOUT ===
 col1, col2 = st.columns([2, 1])
+
 with col1:
     st.subheader("Solar Yield Forecast")
     st.plotly_chart(fig, use_container_width=True, config=config)
     st.markdown(
         """
 **Reading the Graph**
-- **X-axis:** Time  
-- **Y-axis:** Sunlight (W/m²)  
-- **Blue line:** Forecasted solar irradiance  
+- **X-axis:** Time of day  
+- **Y-axis:** Sunlight intensity (W/m²)  
+- **Blue line:** Forecasted sunlight strength  
 - **Peaks around 12 PM = best production hours**  
 """
     )
+
 with col2:
     st.subheader("Live AI Insights")
     st.metric("Best Time to Charge", best_time)
     st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
     st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"R{saved_r/14:.0f}/week")
+
     if st.button("Simulate Charge Now", type="primary"):
         st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f}.")
 
+# === FOOTER INFO ===
 st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** for ≈ {daily_solar_kwh:.1f} kWh free power.")
 st.caption("R1 200 Raspberry Pi + AI | R99/month | Contact: Keanu.kruger05@gmail.com")
