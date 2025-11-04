@@ -22,7 +22,7 @@ with col_loc2:
 if "location" not in st.session_state:
     st.session_state.location = "limpopo"
 
-# === REFRESH BUTTON ===
+# === RESET / REFRESH BUTTON ===
 if st.button("🔄 Reset / Refresh", use_container_width=True):
     st.cache_data.clear()
     st.session_state.clear()
@@ -105,7 +105,7 @@ saved_r = saved_kwh * tariff_per_kwh
 best_idx = df_view["Solar Yield (W/m²)"].idxmax()
 best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
 
-# === GRAPH (Smooth + Hourly + Clean Mobile View + Fade) ===
+# === GRAPH (Clean hourly + slider + fade) ===
 fig = px.line(
     df_view,
     x="Time",
@@ -116,13 +116,13 @@ fig = px.line(
 fig.update_traces(
     line=dict(color="rgba(0,123,255,0.7)", width=3),
     mode="lines+markers",
-    marker=dict(size=8, color="rgba(0,123,255,0.8)", line=dict(width=1.5, color="white")),
+    marker=dict(size=6, color="rgba(0,123,255,0.8)", line=dict(width=1, color="white")),
     hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.0f} W/m²<extra></extra>",
     line_shape="spline",
 )
 fig.update_layout(
-    height=480,  # slightly taller for clarity on mobile
-    width=1000,  # wider canvas for mobile browsers
+    height=480,
+    width=1000,
     margin=dict(l=30, r=30, t=60, b=70),
     title_x=0.5,
     plot_bgcolor="white",
@@ -130,10 +130,11 @@ fig.update_layout(
     hovermode="x unified",
     xaxis=dict(
         tickformat="%H:%M",
-        dtick=3600000,  # show every hour
+        dtick=3600000,  # 1-hour interval
         showgrid=False,
         tickangle=0,
         tickfont=dict(size=13),
+        rangeslider=dict(visible=True, thickness=0.07),  # 👈 X-axis slider
         automargin=True,
     ),
     yaxis=dict(
@@ -143,25 +144,26 @@ fig.update_layout(
     ),
 )
 
-# === FADE-IN EFFECT ===
+# === FADE-IN ANIMATION ===
 graph_placeholder = st.empty()
-for opacity in np.linspace(0.1, 1.0, 12):
-    fig.update_traces(line=dict(color=f"rgba(0,123,255,{opacity})"))
-    graph_placeholder.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-    time.sleep(0.04)
+for opacity in np.linspace(0.1, 1.0, 10):
+    temp_fig = fig
+    temp_fig.update_traces(line=dict(color=f"rgba(0,123,255,{opacity})"))
+    graph_placeholder.plotly_chart(temp_fig, use_container_width=True, config={"displayModeBar": True})
+    time.sleep(0.05)
 
 # === MAIN LAYOUT ===
 col1, col2 = st.columns([1.8, 1.2], gap="large")
 
 with col1:
     st.subheader("🔆 Solar Yield Forecast")
-    graph_placeholder.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
     st.markdown("""
 **📘 Reading the Graph**
 - **X-axis:** Time (hourly from midnight → midnight)  
 - **Y-axis:** Sunlight intensity (W/m²)  
 - **Blue curve:** Forecasted sunlight  
-- **Peaks near 12 PM = Optimal generation**
+- Use the **slider below** to zoom or pan.
     """)
 
 with col2:
