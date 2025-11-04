@@ -4,7 +4,11 @@ import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="SolarAI Optimizer", layout="wide")
+# === REFRESH BUTTON AT TOP ===
+if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
+    st.success("Refreshing... Page will reload in 2 seconds.")
+    st.rerun()
+
 st.title("⚡ SolarAI Optimizer™")
 st.markdown("**AI-Powered Solar Intelligence | Soweto Demo | R99/month**")
 
@@ -51,7 +55,7 @@ with col1:
 
     st.plotly_chart(fig, use_container_width=True, config=config, key="solar_chart")
 
-    # Reset Button
+    # Reset Graph Button
     if st.button("Reset Graph View", type="secondary"):
         st.session_state.graph_relayout = None
         st.success("Graph reset to full 14-day view!")
@@ -61,9 +65,4 @@ with col1:
     st.markdown("""
     ### **How to Use This Demo (Easy as 1-2-3!)**
 
-    1. **Look at the graph**  
-       → It shows **how much sunlight your solar panels will get** for the next **14 days**, hour by hour.
-
-    2. **Find the best time**  
-       → The AI picks the **sunniest 2 hours** of the day.  
-       → That’s when you should turn
+    1. **Look at the graph**
