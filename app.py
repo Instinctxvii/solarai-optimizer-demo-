@@ -8,6 +8,68 @@ import requests
 # === PAGE CONFIG ===
 st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
 
+# === STYLING ===
+st.markdown("""
+<style>
+/* --- Global font & colors --- */
+html, body, [class*="css"] {
+    font-family: "Inter", sans-serif;
+    color: #222;
+}
+
+/* --- Sidebar polish --- */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #fdfdfd 0%, #f5f7fa 100%);
+    border-right: 1px solid #e5e5e5;
+}
+section[data-testid="stSidebar"] h2, h3, label {
+    color: #1e3a8a;
+    font-weight: 600;
+}
+
+/* --- Sliders --- */
+[data-baseweb="slider"] {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+}
+[data-baseweb="slider"] > div {
+    background: linear-gradient(90deg, #007bff 0%, #00c6ff 100%) !important;
+    height: 6px !important;
+    border-radius: 10px !important;
+}
+[data-baseweb="slider"] [role="slider"] {
+    height: 22px !important;
+    width: 22px !important;
+    background: radial-gradient(circle at 30% 30%, #fff 0%, #e6f0ff 70%, #007bff 100%) !important;
+    border: 2px solid #007bff !important;
+    box-shadow: 0px 0px 6px rgba(0, 123, 255, 0.5);
+}
+[data-baseweb="slider"] [role="slider"]:hover {
+    transform: scale(1.15);
+    transition: 0.15s ease-in-out;
+}
+
+/* --- Plotly range slider --- */
+.js-plotly-plot .plotly .rangeslider {
+    fill: #e9f3ff !important;
+    stroke: #007bff !important;
+    stroke-width: 0.6;
+}
+.js-plotly-plot .plotly .rangeslider .handle {
+    fill: #007bff !important;
+    stroke: #004aad !important;
+}
+.js-plotly-plot .plotly .rangeslider .handle:hover {
+    fill: #0056d2 !important;
+}
+
+/* --- Titles --- */
+h1, h2, h3 {
+    font-weight: 700;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # === LOCATION BUTTONS ===
 st.markdown("### 🌍 Select Location")
 col_loc1, col_loc2 = st.columns(2)
@@ -112,7 +174,7 @@ fig = px.line(
     labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Hour of Day"},
 )
 fig.update_traces(
-    line=dict(color="rgba(0,123,255,0.7)", width=3),
+    line=dict(color="rgba(0,123,255,0.75)", width=3),
     mode="lines+markers",
     marker=dict(size=6, color="rgba(0,123,255,0.8)", line=dict(width=1, color="white")),
     hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.0f} W/m²<extra></extra>",
@@ -126,13 +188,13 @@ fig.update_layout(
     plot_bgcolor="white",
     paper_bgcolor="white",
     hovermode="x unified",
-    transition_duration=800,  # smooth fade-in / redraw
+    transition_duration=800,
     xaxis=dict(
         tickformat="%H:%M",
-        dtick=3 * 3600000,       # 3-hour interval
+        dtick=3 * 3600000,
         showgrid=False,
         tickfont=dict(size=13),
-        rangeslider=dict(visible=True, thickness=0.07),
+        rangeslider=dict(visible=True, thickness=0.07, bgcolor="#e9f3ff"),
         range=[start_of_day, end_of_day],
         automargin=True,
     ),
