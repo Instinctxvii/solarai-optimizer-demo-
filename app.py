@@ -30,19 +30,37 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("14-Day Solar Yield Forecast")
+    
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
                   title="Global Horizontal Irradiance (W/m²)",
                   labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
     fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    
+    # FIXED VIEW: Disable zoom, pan, and reset
+    config = {
+        'displayModeBar': True,
+        'modeBarButtonsToRemove': ['zoom', 'pan', 'zoomIn', 'zoomOut', 'autoScale', 'resetScale'],
+        'displaylogo': False
+    }
+    
+    st.plotly_chart(fig, use_container_width=True, config=config)
+    
+    # Explanation under graph
+    st.markdown("""
+    **What this shows**:  
+    This 14-day solar forecast predicts **how much energy your panels will generate** each hour.  
+    Our AI uses satellite data + local weather to find the **best time to charge** (e.g., geyser, battery).  
+    → **No zoom allowed** so investors see the full picture at a glance.
+    """)
 
 with col2:
     st.subheader("Live AI Insights")
     st.metric("Optimal Charge Time", best_time)
     st.metric("Estimated Weekly Savings", "R187", delta="+R42")
     st.metric("Battery Efficiency", "94%", delta="+2%")
+    
     if st.button("Simulate Charge Now", type="primary"):
-        st.success("✅ Relay activated! SMS sent: 'Charge NOW — 85% yield in 2 hours. Reply OK.'")
+        st.success(f"Relay activated! Geyser ON at {best_time}. (SMS feature coming soon)")
 
-st.info(f"📱 **Demo SMS Alert**: Charge at **{best_time}** for maximum yield. (Raspberry Pi + AI)")
-st.caption("👉 Full code: This Repl | Built for South African townships | Contact: [Your Email]")
+st.info(f"AI recommends charging at **{best_time}** for maximum yield.")
+st.caption("Built with Raspberry Pi + AI | R99/month | Contact: [Your Email]")
