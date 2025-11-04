@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
 import requests
+import time
 
 # === PAGE CONFIG ===
 st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
@@ -23,8 +24,8 @@ if "location" not in st.session_state:
 
 # === REFRESH BUTTON ===
 if st.button("🔄 Reset / Refresh", use_container_width=True):
-    st.success("Refreshing... Page will reload shortly.")
     st.cache_data.clear()
+    st.session_state.clear()
     st.rerun()
 
 # === HEADER ===
@@ -42,7 +43,7 @@ st.markdown(f"**📡 Current Location:** {loc['name']}")
 # === FETCH DATA ===
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.DataFrame:
-    """Return solar irradiance (GHI) forecast for 14 days (hourly)."""
+    """Return solar irradiance (GHI) forecast for 14 days (30-min intervals)."""
     try:
         if api_key and api_key != "demo":
             url = (
@@ -56,18 +57,17 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
             df["Time"] = pd.to_datetime(df["period_end"])
             df["Solar Yield (W/m²)"] = df["ghi"]
             return df[["Time", "Solar Yield (W/m²)"]].tail(336)
-    except Exception as e:
-        st.warning(f"⚠️ API unavailable — using demo data ({e})")
+    except Exception:
+        st.warning("⚠️ API unavailable — using demo data.")
 
-    # === Demo synthetic data (HOURLY for 14 days) ===
+    # === Demo synthetic data ===
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
     index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="30min")
     hours = index.hour + index.minute / 60
     seasonal = 1.2 if now.month in [11, 12, 1, 2] else 0.8
     ghi = np.maximum(
         0,
-        800 * np.sin((hours - 12) * np.pi / 12) * seasonal
-        + np.random.normal(0, 40, len(index)),
+        800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 40, len(index)),
     )
     return pd.DataFrame({"Time": index, "Solar Yield (W/m²)": ghi})
 
@@ -82,11 +82,7 @@ solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password
 df = get_solcast_forecast(loc["lat"], loc["lon"], api_key=solcast_key)
 
 # === VIEW TOGGLE ===
-view_mode = st.radio(
-    "📊 Select View:",
-    ["24 Hours (Today)", "14-Day Forecast"],
-    horizontal=True,
-)
+view_mode = st.radio("📊 Select View:", ["24 Hours (Today)", "14-Day Forecast"], horizontal=True)
 
 # === FILTER VIEW ===
 now = datetime.now()
@@ -106,11 +102,10 @@ total_solar_kwh = daily_solar_kwh * 14
 used_kwh = system_size_kw * hours_used_per_day * 14
 saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * tariff_per_kwh
-
 best_idx = df_view["Solar Yield (W/m²)"].idxmax()
 best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
 
-# === GRAPH (SMOOTH + STYLED + FADE ANIMATION) ===
+# === GRAPH (Smooth + 30min + Fade Effect) ===
 fig = px.line(
     df_view,
     x="Time",
@@ -118,17 +113,13 @@ fig = px.line(
     title=f"☀️ Global Horizontal Irradiance — {loc['name']} ({view_mode})",
     labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Hour of Day"},
 )
-
-# Style the line and markers
 fig.update_traces(
-    line=dict(color="rgba(0, 123, 255, 0.6)", width=3),
+    line=dict(color="rgba(0,123,255,0.7)", width=3),
     mode="lines+markers",
-    marker=dict(size=8, color="rgba(0, 123, 255, 0.8)", line=dict(width=1.5, color="white")),
+    marker=dict(size=8, color="rgba(0,123,255,0.8)", line=dict(width=1.5, color="white")),
     hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.0f} W/m²<extra></extra>",
     line_shape="spline",
 )
-
-# Base layout
 fig.update_layout(
     height=420,
     margin=dict(l=30, r=30, t=60, b=40),
@@ -138,63 +129,37 @@ fig.update_layout(
     hovermode="x unified",
     xaxis=dict(
         showgrid=False,
-        showline=False,
-        dtick=60 * 30 * 1000,  # ✅ every 30 mins
+        dtick=60 * 30 * 1000,  # every 30 minutes
         tickformat="%H:%M",
         tickfont=dict(size=13),
     ),
     yaxis=dict(
         showgrid=True,
         gridcolor="rgba(200,200,200,0.3)",
-        zeroline=False,
         tickfont=dict(size=13),
     ),
 )
 
-# ✅ Fade-in animation using frame opacity
-frames = [dict(data=[dict(opacity=o)]) for o in np.linspace(0.1, 1.0, 15)]
-fig.frames = frames
-fig.update_layout(
-    updatemenus=[{
-        "type": "buttons",
-        "showactive": False,
-        "buttons": [{
-            "label": "",
-            "method": "animate",
-            "args": [
-                None,
-                {"frame": {"duration": 60, "redraw": True},
-                 "fromcurrent": True,
-                 "mode": "immediate"}
-            ],
-        }],
-    }],
-)
-
-# Auto-play the fade-in (without showing a button)
-fig.layout.updatemenus[0].buttons[0].args[1]["transition"] = {"duration": 0}
-fig.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"] = 50
-
-# Interactive controls
-config = {"displayModeBar": True, "scrollZoom": False}
+# === FADE-IN EFFECT (Simulated Animation) ===
+graph_placeholder = st.empty()
+for opacity in np.linspace(0.1, 1.0, 10):
+    fig.update_traces(line=dict(color=f"rgba(0,123,255,{opacity})"))
+    graph_placeholder.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+    time.sleep(0.05)
 
 # === MAIN LAYOUT ===
 col1, col2 = st.columns([1.8, 1.2], gap="large")
 
 with col1:
     st.subheader("🔆 Solar Yield Forecast")
-    st.plotly_chart(fig, use_container_width=True, config=config)
-    st.markdown(
-        """
+    graph_placeholder.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
+    st.markdown("""
 **📘 Reading the Graph**
-- **X-axis:** Time of day (every 30 min)  
-- **Y-axis:** Sunlight intensity (W/m²)  
-- **Blue line:** Forecasted sunlight strength  
-- **Peaks around 12 PM = Best production hours**  
-- **Touch or hover to inspect values**  
-- **Double-tap to reset zoom.**
-        """
-    )
+- **X-axis:** Time (every 30 mins)  
+- **Y-axis:** Solar intensity (W/m²)  
+- **Blue line:** Predicted sunlight  
+- **Peaks around noon = best hours**
+    """)
 
 with col2:
     st.subheader("🤖 Live AI Insights")
