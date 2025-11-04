@@ -10,21 +10,25 @@ st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
 
 # === LOCATION BUTTONS ===
 st.markdown("### 🌍 Select Location")
-col_loc1, col_loc2 = st.columns(2)
+col_loc1, col_loc2, col_loc3 = st.columns([1, 1, 1])
+
 with col_loc1:
     if st.button("📍 Limpopo (Polokwane)", use_container_width=True):
         st.session_state.location = "limpopo"
+
 with col_loc2:
     if st.button("🌞 Nelspruit (Mbombela)", use_container_width=True):
         st.session_state.location = "nelspruit"
 
+with col_loc3:
+    # ✅ Reset button restored (prominent and aligned)
+    if st.button("🔄 Reset / Refresh", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
+# === DEFAULT LOCATION ===
 if "location" not in st.session_state:
     st.session_state.location = "limpopo"
-
-# === REFRESH BUTTON ===
-if st.button("🔄 Reset / Refresh Demo", use_container_width=True):
-    st.success("Refreshing... Page will reload shortly.")
-    st.rerun()
 
 # === HEADER ===
 st.title("☀️ SolarAI Optimizer™")
@@ -41,7 +45,7 @@ st.markdown(f"**📡 Current Location:** {loc['name']}")
 # === FETCH DATA ===
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.DataFrame:
-    """Return solar irradiance (GHI) forecast for 14 days (hourly)."""
+    """Return solar irradiance (GHI) forecast for 14 days (half-hourly)."""
     try:
         if api_key and api_key != "demo":
             url = (
@@ -58,9 +62,9 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
     except Exception as e:
         st.warning(f"⚠️ API unavailable — using demo data ({e})")
 
-    # === Demo synthetic data (HOURLY for 14 days) ===
+    # === Demo synthetic data (30-MIN for 14 days) ===
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
-    index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="1h")
+    index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="30min")
     hours = index.hour + index.minute / 60
     seasonal = 1.2 if now.month in [11, 12, 1, 2] else 0.8
     ghi = np.maximum(
@@ -105,11 +109,10 @@ total_solar_kwh = daily_solar_kwh * 14
 used_kwh = system_size_kw * hours_used_per_day * 14
 saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * tariff_per_kwh
-
 best_idx = df_view["Solar Yield (W/m²)"].idxmax()
 best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
 
-# === GRAPH (SMOOTH + STYLED) ===
+# === GRAPH (SMOOTH + STYLED + FADE ANIMATION) ===
 fig = px.line(
     df_view,
     x="Time",
@@ -118,21 +121,51 @@ fig = px.line(
     labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Hour of Day"},
 )
 
-# Style the line and markers
+# Style the line and markers (with fade-in animation)
 fig.update_traces(
     line=dict(color="rgba(0, 123, 255, 0.5)", width=3),
     mode="lines+markers",
     marker=dict(
-        size=10,
+        size=8,
         color="rgba(0, 123, 255, 0.6)",
         line=dict(width=1.5, color="white"),
     ),
     hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.0f} W/m²<extra></extra>",
-    line_shape="spline",  # ✅ smoother curve
+    line_shape="spline",
 )
 
-# Smooth layout style — clean and modern look
+# Fade-in effect
+fig.update_traces(visible=True, opacity=0.1)
 fig.update_layout(
+    updatemenus=[
+        {
+            "type": "buttons",
+            "showactive": False,
+            "buttons": [
+                {
+                    "label": "Play",
+                    "method": "animate",
+                    "args": [
+                        None,
+                        {
+                            "frame": {"duration": 50, "redraw": True},
+                            "fromcurrent": True,
+                            "mode": "immediate",
+                        },
+                    ],
+                }
+            ],
+            "x": 0.02,
+            "y": 1.15,
+        }
+    ],
+    sliders=[
+        {
+            "steps": [
+                {"args": [[None], {"frame": {"duration": 0, "redraw": False}}], "label": "", "method": "animate"}
+            ]
+        }
+    ],
     height=420,
     margin=dict(l=30, r=30, t=60, b=40),
     title_x=0.5,
@@ -142,6 +175,7 @@ fig.update_layout(
     xaxis=dict(
         showgrid=False,
         showline=False,
+        dtick=60 * 30 * 1000,  # ✅ every 30 mins
         tickformat="%H:%M",
         tickfont=dict(size=13),
     ),
@@ -151,13 +185,12 @@ fig.update_layout(
         zeroline=False,
         tickfont=dict(size=13),
     ),
+    frames=[
+        {"data": [dict(opacity=o)]} for o in np.linspace(0.1, 1, 20)
+    ],  # smooth fade-in
 )
 
-# Interactive controls (minimal for clean feel)
-config = {
-    "displayModeBar": False,
-    "scrollZoom": False,
-}
+config = {"displayModeBar": False, "scrollZoom": False}
 
 # === MAIN LAYOUT ===
 col1, col2 = st.columns([1.8, 1.2], gap="large")
@@ -168,10 +201,10 @@ with col1:
     st.markdown(
         """
 **📘 Reading the Graph**
-- **X-axis:** Time of day  
+- **X-axis:** Time of day (30-min intervals)  
 - **Y-axis:** Sunlight intensity (W/m²)  
 - **Blue line:** Forecasted sunlight strength  
-- **Peaks around 12 PM = Best production hours**  
+- **Peaks around noon = Best production hours**  
 - **Touch or hover to inspect values**  
 - **Double-tap to reset zoom.**
         """
