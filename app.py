@@ -43,7 +43,7 @@ st.markdown(f"**📡 Current Location:** {loc['name']}")
 # === FETCH DATA ===
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.DataFrame:
-    """Return solar irradiance (GHI) forecast for 14 days (30-min intervals)."""
+    """Return solar irradiance (GHI) forecast for 14 days (hourly)."""
     try:
         if api_key and api_key != "demo":
             url = (
@@ -62,7 +62,7 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
 
     # === Demo synthetic data ===
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
-    index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="30min")
+    index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="1h")
     hours = index.hour + index.minute / 60
     seasonal = 1.2 if now.month in [11, 12, 1, 2] else 0.8
     ghi = np.maximum(
@@ -105,7 +105,7 @@ saved_r = saved_kwh * tariff_per_kwh
 best_idx = df_view["Solar Yield (W/m²)"].idxmax()
 best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
 
-# === GRAPH (Smooth + 30min + Fade Effect) ===
+# === GRAPH (Smooth + Hourly + Clean Mobile View + Fade) ===
 fig = px.line(
     df_view,
     x="Time",
@@ -121,17 +121,20 @@ fig.update_traces(
     line_shape="spline",
 )
 fig.update_layout(
-    height=420,
-    margin=dict(l=30, r=30, t=60, b=40),
+    height=480,  # slightly taller for clarity on mobile
+    width=1000,  # wider canvas for mobile browsers
+    margin=dict(l=30, r=30, t=60, b=70),
     title_x=0.5,
     plot_bgcolor="white",
     paper_bgcolor="white",
     hovermode="x unified",
     xaxis=dict(
-        showgrid=False,
-        dtick=60 * 30 * 1000,  # every 30 minutes
         tickformat="%H:%M",
+        dtick=3600000,  # show every hour
+        showgrid=False,
+        tickangle=0,
         tickfont=dict(size=13),
+        automargin=True,
     ),
     yaxis=dict(
         showgrid=True,
@@ -140,12 +143,12 @@ fig.update_layout(
     ),
 )
 
-# === FADE-IN EFFECT (Simulated Animation) ===
+# === FADE-IN EFFECT ===
 graph_placeholder = st.empty()
-for opacity in np.linspace(0.1, 1.0, 10):
+for opacity in np.linspace(0.1, 1.0, 12):
     fig.update_traces(line=dict(color=f"rgba(0,123,255,{opacity})"))
     graph_placeholder.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-    time.sleep(0.05)
+    time.sleep(0.04)
 
 # === MAIN LAYOUT ===
 col1, col2 = st.columns([1.8, 1.2], gap="large")
@@ -155,10 +158,10 @@ with col1:
     graph_placeholder.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
     st.markdown("""
 **📘 Reading the Graph**
-- **X-axis:** Time (every 30 mins)  
-- **Y-axis:** Solar intensity (W/m²)  
-- **Blue line:** Predicted sunlight  
-- **Peaks around noon = best hours**
+- **X-axis:** Time (hourly from midnight → midnight)  
+- **Y-axis:** Sunlight intensity (W/m²)  
+- **Blue curve:** Forecasted sunlight  
+- **Peaks near 12 PM = Optimal generation**
     """)
 
 with col2:
