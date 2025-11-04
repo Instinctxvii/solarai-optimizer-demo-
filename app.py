@@ -19,7 +19,7 @@ with col_loc2:
 if 'location' not in st.session_state:
     st.session_state.location = "limpopo"
 
-# === REFRESH BUTTON ===
+# === REFRESH DEMO BUTTON ===
 if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
     st.success("Refreshing... Page will reload in 2 seconds.")
     st.rerun()
@@ -46,7 +46,7 @@ def get_solcast_forecast(lat, lon, api_key='demo'):
         ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
         return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
     
-    url = f"https://api.solcast.com.au/radiation/forecasts?latitude={lat}&longitude={lon}&api_key={api_key}&format=json"
+    url = f"https://api.solcast.com.au/radiation/forecasts?latitude={lat}&longitude={lon}&api_key={api_with=api_key}&format=json"
     try:
         r = requests.get(url)
         if r.status_code == 200:
@@ -87,7 +87,7 @@ next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
 best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
-# Graph reset
+# === GRAPH RESET STATE ===
 if 'graph_relayout' not in st.session_state:
     st.session_state.graph_relayout = None
 
@@ -97,33 +97,39 @@ col1, col2 = st.columns([2, 1])
 with col1:
     st.subheader("14-Day Solar Yield Forecast")
 
+    # === NON-INTERACTABLE GRAPH ===
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
                   title=f"GHI — {loc['name']} (Free Satellite Data)",
                   labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
     fig.update_layout(
         height=400,
-        margin=dict(l=40, r=40, t=80, b=40),  # ↑ Fixed icon overlap
+        margin=dict(l=40, r=40, t=80, b=40),
         title_x=0.5,
-        title_font_size=16
+        title_font_size=16,
+        hovermode=False,  # Disable hover
+        dragmode=False    # Disable drag
     )
     
+    # FULLY DISABLE INTERACTION
     config = {
-        'displayModeBar': True,
-        'modeBarButtonsToRemove': ['zoom', 'pan', 'zoomIn', 'zoomOut', 'autoScale'],
+        'staticPlot': True,                    # ← NO interaction at all
+        'displayModeBar': False,               # ← Hide toolbar
         'displaylogo': False
     }
     
+    # Apply stored view or reset
     if st.session_state.graph_relayout:
         fig.update_layout(st.session_state.graph_relayout)
 
     st.plotly_chart(fig, use_container_width=True, config=config, key="solar_chart")
 
+    # === FIXED RESET BUTTON ===
     if st.button("Reset Graph View", type="secondary"):
         st.session_state.graph_relayout = None
-        st.success("Graph reset!")
+        st.success("Graph reset to full 14-day view!")
         st.rerun()
 
-    # EXPLANATION FOR GRAPH
+    # EXPLANATION
     st.markdown("""
 **What is Solar Yield?**  
 → **Solar Yield (W/m²)** = **How much sunlight hits your panel right now**.  
@@ -142,3 +148,11 @@ with col1:
 with col2:
     st.subheader("Live AI Insights")
     st.metric("Best Time to Charge", best_time)
+    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
+    st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"R{saved_r/14:.0f}/week")
+    
+    if st.button("Simulate Charge Now", type="primary"):
+        st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f} (real data).")
+
+st.info(f"AI says: **Charge at {best_time}** in **{loc['Keanu']}** for {daily_solar_kwh:.1f} kWh free power!")
+st.caption("R1,200 Raspberry Pi + AI | R99/month | Contact: [Keanu.kruger05@gmail.com]")
