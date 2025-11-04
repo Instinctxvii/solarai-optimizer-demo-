@@ -18,11 +18,12 @@ with col_loc2:
 if "location" not in st.session_state:
     st.session_state.location = "limpopo"
 
-# === REFRESH BUTTON ===
-if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
+# === REFRESH BUTTON (restored) ===
+if st.button("🔄 Reset Graph View / Refresh Demo", type="primary", use_container_width=True):
     st.success("Refreshing... Page will reload in 2 seconds.")
     st.rerun()
 
+# === HEADER ===
 st.title("SolarAI Optimizer™")
 st.markdown("**AI-Powered Solar Intelligence | R99/month**")
 
@@ -54,9 +55,9 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
     except Exception as e:
         st.warning(f"API unavailable → using demo data ({e})")
 
-    # === Demo synthetic data (hourly for 14 days) ===
+    # === Demo synthetic data (HOURLY for 14 days) ===
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
-    index = pd.date_range(now - timedelta(hours=12), periods=24 * 14, freq="h")
+    index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="1h")
     hours = index.hour + index.minute / 60
     seasonal = 1.2 if now.month in [11, 12, 1, 2] else 0.8
     ghi = np.maximum(
@@ -76,21 +77,20 @@ solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password
 # === FETCH FORECAST DATA ===
 df = get_solcast_forecast(loc["lat"], loc["lon"], api_key=solcast_key)
 
-# === VIEW TOGGLE (only 24h or 14 days) ===
+# === VIEW TOGGLE ===
 view_mode = st.radio(
     "Select View:",
     ["24 Hours (Today)", "14-Day Forecast"],
     horizontal=True,
 )
 
-# === PREPARE VIEW ===
+# === FILTER VIEW ===
 now = datetime.now()
 today = now.date()
 start_of_day = datetime.combine(today, datetime.min.time())
 end_of_day = start_of_day + timedelta(days=1)
 
 if view_mode == "24 Hours (Today)":
-    # Show from midnight today to midnight tomorrow
     df_view = df[(df["Time"] >= start_of_day) & (df["Time"] < end_of_day)]
 else:
     df_view = df.copy()
@@ -119,6 +119,7 @@ fig.update_layout(
     margin=dict(l=40, r=40, t=60, b=40),
     title_x=0.5,
     hovermode="x unified",
+    xaxis=dict(dtick=3600000.0),  # 1 hour ticks
 )
 config = {"displayModeBar": False, "displaylogo": False}
 
