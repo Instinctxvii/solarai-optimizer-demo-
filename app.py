@@ -35,7 +35,7 @@ locations = {
 loc = locations[st.session_state.location]
 st.markdown(f"**Current Location: {loc['name']}**")
 
-# Solcast API
+# === DEMO OR API DATA ===
 @st.cache_data(ttl=3600)
 def get_solcast_forecast(lat, lon, api_key='demo'):
     if api_key == 'demo':
@@ -46,15 +46,15 @@ def get_solcast_forecast(lat, lon, api_key='demo'):
         ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
         return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
     
-    url = f"https://api.solcast.com.au/radiation/forecasts?latitude={lat}&longitude={lon}&api_key={api_key}&format=json"
     try:
+        url = f"https://api.solcast.com.au/radiation/forecasts?latitude={lat}&longitude={lon}&api_key={api_key}&format=json"
         r = requests.get(url)
         if r.status_code == 200:
             data = r.json()['forecasts']
             df = pd.DataFrame(data)
             df['Time'] = pd.to_datetime(df['period_end'])
             df['Solar Yield (W/m²)'] = df['ghi']
-            return df[['Time', 'Solar Yield (W/m²)']].tail(168)  # 7 days
+            return df[['Time', 'Solar Yield (W/m²)']].tail(168)
     except Exception as e:
         st.error(f"API Error: {e}. Using demo data.")
     
@@ -65,7 +65,7 @@ def get_solcast_forecast(lat, lon, api_key='demo'):
     ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
     return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-# Sidebar
+# === SIDEBAR ===
 st.sidebar.header("Your Solar System")
 system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
 hours_used_per_day = st.sidebar.slider("Daily Usage (hours)", 4, 12, 6)
@@ -74,16 +74,34 @@ solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password
 
 df = get_solcast_forecast(loc['lat'], loc['lon'], api_key=solcast_key)
 
-# Dropdown to select day
+# === DAY SELECTION ===
 st.markdown("### Select Day to View")
 df['Date'] = df['Time'].dt.date
 unique_days = sorted(df['Date'].unique())
-selected_day = st.selectbox("Choose a day to view solar yield:", ["All (7 Days)"] + [str(d) for d in unique_days])
+day_options = ["All (7 Days)"] + [str(d) for d in unique_days]
+selected_day = st.selectbox("Choose a day:", day_options, index=0)
 
-# Filter data based on selection
+# Filter for one day or all
 if selected_day != "All (7 Days)":
-    df_display = df[df['Date'] == pd.to_datetime(selected_day).date()]
+    selected_date = pd.to_datetime(selected_day).date()
+    df_display = df[df['Date'] == selected_date]
 else:
-    df_display = df
+    df_display = df.copy()
 
-# kWh & Savings
+# === SOLAR STATS ===
+avg_ghi = df['Solar Yield (W/m²)'].mean()
+daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
+total_solar_kwh = daily_solar_kwh * 7
+used_kwh = system_size_kw * hours_used_per_day * 7
+saved_kwh = min(total_solar_kwh, used_kwh)
+saved_r = saved_kwh * tariff_per_kwh
+
+# === BEST CHARGE TIME ===
+next_24h = df.head(24)
+best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
+best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+
+# === GRAPH ===
+fig = px.line(
+    df_display, x='Time', y='Solar Yield (W/m²)',
+    title=f"GHI — {loc['name']} ({'All 7 Days
