@@ -5,26 +5,29 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import requests
 
+# === PAGE CONFIG ===
+st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
+
 # === LOCATION BUTTONS ===
-st.markdown("### Select Location")
+st.markdown("### 🌍 Select Location")
 col_loc1, col_loc2 = st.columns(2)
 with col_loc1:
-    if st.button("Limpopo (Polokwane)", type="secondary", use_container_width=True):
+    if st.button("📍 Limpopo (Polokwane)", use_container_width=True):
         st.session_state.location = "limpopo"
 with col_loc2:
-    if st.button("Nelspruit (Mpumalanga)", type="secondary", use_container_width=True):
+    if st.button("🌞 Nelspruit (Mbombela)", use_container_width=True):
         st.session_state.location = "nelspruit"
 
 if "location" not in st.session_state:
     st.session_state.location = "limpopo"
 
-# === REFRESH BUTTON (restored) ===
-if st.button("🔄 Reset Graph View / Refresh Demo", type="primary", use_container_width=True):
-    st.success("Refreshing... Page will reload in 2 seconds.")
+# === REFRESH BUTTON ===
+if st.button("🔄 Reset / Refresh Demo", use_container_width=True):
+    st.success("Refreshing... Page will reload shortly.")
     st.rerun()
 
 # === HEADER ===
-st.title("SolarAI Optimizer™")
+st.title("☀️ SolarAI Optimizer™")
 st.markdown("**AI-Powered Solar Intelligence | R99/month**")
 
 # === LOCATION COORDINATES ===
@@ -33,7 +36,7 @@ locations = {
     "nelspruit": {"name": "Nelspruit (Mbombela)", "lat": -25.4753, "lon": 30.9694},
 }
 loc = locations[st.session_state.location]
-st.markdown(f"**Current Location:** {loc['name']}")
+st.markdown(f"**📡 Current Location:** {loc['name']}")
 
 # === FETCH DATA ===
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -53,7 +56,7 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
             df["Solar Yield (W/m²)"] = df["ghi"]
             return df[["Time", "Solar Yield (W/m²)"]].tail(336)
     except Exception as e:
-        st.warning(f"API unavailable → using demo data ({e})")
+        st.warning(f"⚠️ API unavailable — using demo data ({e})")
 
     # === Demo synthetic data (HOURLY for 14 days) ===
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
@@ -68,7 +71,7 @@ def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.Da
     return pd.DataFrame({"Time": index, "Solar Yield (W/m²)": ghi})
 
 # === SIDEBAR ===
-st.sidebar.header("Your Solar System")
+st.sidebar.header("⚙️ Your Solar System")
 system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
 hours_used_per_day = st.sidebar.slider("Daily Usage (hours)", 4, 12, 6)
 tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2.5)
@@ -79,7 +82,7 @@ df = get_solcast_forecast(loc["lat"], loc["lon"], api_key=solcast_key)
 
 # === VIEW TOGGLE ===
 view_mode = st.radio(
-    "Select View:",
+    "📊 Select View:",
     ["24 Hours (Today)", "14-Day Forecast"],
     horizontal=True,
 )
@@ -111,43 +114,58 @@ fig = px.line(
     df_view,
     x="Time",
     y="Solar Yield (W/m²)",
-    title=f"GHI — {loc['name']} ({view_mode})",
+    title=f"☀️ Global Horizontal Irradiance — {loc['name']} ({view_mode})",
     labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Date & Time"},
 )
+
+fig.update_traces(line=dict(color="#007BFF", width=2.5))
 fig.update_layout(
-    height=420,
-    margin=dict(l=40, r=40, t=60, b=40),
+    height=460,
+    margin=dict(l=30, r=30, t=60, b=40),
     title_x=0.5,
     hovermode="x unified",
-    xaxis=dict(dtick=3600000.0),  # 1 hour ticks
+    xaxis=dict(
+        showgrid=True,
+        gridwidth=0.3,
+        gridcolor="rgba(180,180,180,0.3)",
+    ),
+    yaxis=dict(showgrid=True, gridwidth=0.3, gridcolor="rgba(180,180,180,0.3)"),
 )
-config = {"displayModeBar": False, "displaylogo": False}
+
+# Enable zoom/pan/reset toolbar
+config = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "modeBarButtonsToRemove": ["select2d", "lasso2d"]
+}
 
 # === MAIN LAYOUT ===
-col1, col2 = st.columns([2, 1])
+col1, col2 = st.columns([1.8, 1.2], gap="large")
 
 with col1:
-    st.subheader("Solar Yield Forecast")
+    st.subheader("🔆 Solar Yield Forecast")
     st.plotly_chart(fig, use_container_width=True, config=config)
     st.markdown(
         """
-**Reading the Graph**
+**📘 Reading the Graph**
 - **X-axis:** Time of day  
 - **Y-axis:** Sunlight intensity (W/m²)  
 - **Blue line:** Forecasted sunlight strength  
-- **Peaks around 12 PM = best production hours**  
-"""
+- **Peaks around 12 PM = Best production hours**  
+- **Pinch or scroll to zoom**, double-tap to reset.
+        """
     )
 
 with col2:
-    st.subheader("Live AI Insights")
+    st.subheader("🤖 Live AI Insights")
     st.metric("Best Time to Charge", best_time)
     st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"R{saved_r/14:.0f}/week")
+    st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"≈ R{saved_r/14:.0f}/day")
 
-    if st.button("Simulate Charge Now", type="primary"):
+    if st.button("⚡ Simulate Charge Now", use_container_width=True):
         st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f}.")
 
-# === FOOTER INFO ===
-st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** for ≈ {daily_solar_kwh:.1f} kWh free power.")
-st.caption("R1 200 Raspberry Pi + AI | R99/month | Contact: Keanu.kruger05@gmail.com")
+# === FOOTER ===
+st.markdown("---")
+st.info(f"💡 AI Suggestion: Charge at **{best_time}** in **{loc['name']}** to maximize free solar power.")
+st.caption("R1 200 Raspberry Pi + AI | R99/month | Contact: **Keanu.kruger05@gmail.com**")
