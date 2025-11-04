@@ -109,7 +109,7 @@ saved_r = saved_kwh * tariff_per_kwh
 best_idx = df_view["Solar Yield (W/m²)"].idxmax()
 best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
 
-# === GRAPH ===
+# === GRAPH (ENHANCED) ===
 fig = px.line(
     df_view,
     x="Time",
@@ -118,20 +118,47 @@ fig = px.line(
     labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Date & Time"},
 )
 
-fig.update_traces(line=dict(color="#007BFF", width=2.5))
+fig.update_traces(
+    line=dict(color="#007BFF", width=2.5),
+    hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.1f} W/m²<extra></extra>",
+)
+
+# Layout & interactivity tuning
 fig.update_layout(
     height=460,
     margin=dict(l=30, r=30, t=60, b=40),
     title_x=0.5,
-    hovermode="x unified",
-    xaxis=dict(showgrid=True, gridwidth=0.3, gridcolor="rgba(180,180,180,0.3)"),
-    yaxis=dict(showgrid=True, gridwidth=0.3, gridcolor="rgba(180,180,180,0.3)"),
+    hovermode="x unified",   # Single vertical line that follows the finger/mouse
+    hoverdistance=30,        # Increases tolerance for touch input
+    spikedistance=30,        # Keeps the spike line visible during drag
+    xaxis=dict(
+        showgrid=True,
+        gridwidth=0.3,
+        gridcolor="rgba(180,180,180,0.3)",
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        spikecolor="rgba(255,255,255,0.8)",
+        spikethickness=1.2,
+    ),
+    yaxis=dict(
+        showgrid=True,
+        gridwidth=0.3,
+        gridcolor="rgba(180,180,180,0.3)",
+        showspikes=True,
+        spikemode="across",
+        spikecolor="rgba(255,255,255,0.8)",
+        spikethickness=1.2,
+    ),
 )
 
+# Enable drag-to-inspect mode by default (no zoom needed)
 config = {
     "displayModeBar": True,
     "displaylogo": False,
+    "scrollZoom": False,   # Prevent accidental zoom while dragging
     "modeBarButtonsToRemove": ["select2d", "lasso2d"],
+    "doubleClick": "reset",  # Double-tap to reset zoom if you do zoom
 }
 
 # === MAIN LAYOUT ===
@@ -147,7 +174,8 @@ with col1:
 - **Y-axis:** Sunlight intensity (W/m²)  
 - **Blue line:** Forecasted sunlight strength  
 - **Peaks around 12 PM = Best production hours**  
-- **Pinch or scroll to zoom**, double-tap to reset.
+- **Touch or hover to inspect values**  
+- **Double-tap to reset zoom.**
         """
     )
 
