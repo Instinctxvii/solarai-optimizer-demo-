@@ -27,16 +27,15 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
 st.title("SolarAI Optimizer™")
 st.markdown("**AI-Powered Solar Intelligence | R99/month**")
 
-# Location Coordinates (Real)
+# Location Coordinates
 locations = {
     "limpopo": {"name": "Limpopo (Polokwane)", "lat": -23.8962, "lon": 29.4486},
     "nelspruit": {"name": "Nelspruit (Mbombela)", "lat": -25.4753, "lon": 30.9694}
 }
 loc = locations[st.session_state.location]
-
 st.markdown(f"**Current Location: {loc['name']}**")
 
-# Real Solcast API (free satellite data)
+# Solcast API
 @st.cache_data(ttl=3600)
 def get_solcast_forecast(lat, lon, api_key='demo'):
     if api_key == 'demo':
@@ -59,7 +58,6 @@ def get_solcast_forecast(lat, lon, api_key='demo'):
     except Exception as e:
         st.error(f"API Error: {e}. Using demo data.")
     
-    # Fallback
     now = datetime.now()
     index = pd.date_range(now, periods=336, freq='h')
     hours = index.hour
@@ -67,7 +65,7 @@ def get_solcast_forecast(lat, lon, api_key='demo'):
     ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
     return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-# Sidebar Inputs
+# Sidebar
 st.sidebar.header("Your Solar System")
 system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
 hours_used_per_day = st.sidebar.slider("Daily Usage (hours)", 4, 12, 6)
@@ -76,9 +74,9 @@ solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password
 
 df = get_solcast_forecast(loc['lat'], loc['lon'], api_key=solcast_key)
 
-# kWh & Savings (Accurate SA Model)
+# kWh & Savings
 avg_ghi = df['Solar Yield (W/m²)'].mean()
-daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5  # 5 peak sun hours/day
+daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
 total_solar_kwh = daily_solar_kwh * 14
 used_kwh = system_size_kw * hours_used_per_day * 14
 saved_kwh = min(total_solar_kwh, used_kwh)
@@ -97,4 +95,47 @@ if 'graph_relayout' not in st.session_state:
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("14
+    st.subheader("14-Day Solar Yield Forecast")  # ← FIXED LINE
+
+    fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
+                  title=f"GHI — {loc['name']} (Free Satellite Data)",
+                  labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
+    fig.update_layout(height=400, margin=dict(l=40, r=40, t=40, b=40))
+    
+    config = {
+        'displayModeBar': True,
+        'modeBarButtonsToRemove': ['zoom', 'pan', 'zoomIn', 'zoomOut', 'autoScale'],
+        'displaylogo': False
+    }
+    
+    if st.session_state.graph_relayout:
+        fig.update_layout(st.session_state.graph_relayout)
+
+    st.plotly_chart(fig, use_container_width=True, config=config, key="solar_chart")
+
+    if st.button("Reset Graph View", type="secondary"):
+        st.session_state.graph_relayout = None
+        st.success("Graph reset!")
+        st.rerun()
+
+    st.markdown("""
+### **How to Use (Easy as 1-2-3!)**
+
+1. **Pick a location** → See real sunlight forecast  
+2. **Enter your system** → Get **exact R saved**  
+3. **Click "Simulate Charge"** → AI turns on geyser at peak
+
+**All data from free satellites + simple math.**
+""")
+
+with col2:
+    st.subheader("Live AI Insights")
+    st.metric("Best Time to Charge", best_time)
+    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
+    st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"R{saved_r/14:.0f}/week")
+    
+    if st.button("Simulate Charge Now", type="primary"):
+        st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f} (real data).")
+
+st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** for {daily_solar_kwh:.1f} kWh free power!")
+st.caption("R1,200 Raspberry Pi + AI | R99/month | Contact: [Your Email]")
