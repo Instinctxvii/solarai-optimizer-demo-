@@ -17,6 +17,10 @@ def generate_solar_data():
     ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
     return pd.DataFrame({'ghi': ghi}, index=index).resample('H').mean()
 
+# Use session state to store graph view
+if 'graph_relayout' not in st.session_state:
+    st.session_state.graph_relayout = None
+
 df = generate_solar_data().reset_index()
 df.columns = ['Time', 'Solar Yield (W/m²)']
 
@@ -34,23 +38,35 @@ with col1:
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
                   title="Global Horizontal Irradiance (W/m²)",
                   labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
-    fig.update_layout(height=400)
+    fig.update_layout(height=400, margin=dict(l=40, r=40, t=40, b=40))
     
-    # FIXED VIEW: Disable zoom, pan, and reset
+    # FIXED VIEW: Disable zoom/pan
     config = {
         'displayModeBar': True,
-        'modeBarButtonsToRemove': ['zoom', 'pan', 'zoomIn', 'zoomOut', 'autoScale', 'resetScale'],
+        'modeBarButtonsToRemove': ['zoom', 'pan', 'zoomIn', 'zoomOut', 'autoScale'],
         'displaylogo': False
     }
     
-    st.plotly_chart(fig, use_container_width=True, config=config)
-    
+    # Apply stored relayout (or None for default)
+    relayout_data = st.session_state.graph_relayout
+    if relayout_data:
+        fig.update_layout(relayout_data)
+
+    chart = st.plotly_chart(fig, use_container_width=True, config=config, key="solar_chart")
+
+    # Reset Button
+    if st.button("Reset Graph View", type="secondary"):
+        st.session_state.graph_relayout = None
+        st.success("Graph reset to full 14-day view!")
+        st.rerun()
+
     # Explanation under graph
     st.markdown("""
     **What this shows**:  
     This 14-day solar forecast predicts **how much energy your panels will generate** each hour.  
     Our AI uses satellite data + local weather to find the **best time to charge** (e.g., geyser, battery).  
-    → **No zoom allowed** so investors see the full picture at a glance.
+    → **No zoom allowed** so investors see the full picture at a glance.  
+    → Use **"Reset Graph View"** if the view shifts.
     """)
 
 with col2:
@@ -60,7 +76,7 @@ with col2:
     st.metric("Battery Efficiency", "94%", delta="+2%")
     
     if st.button("Simulate Charge Now", type="primary"):
-        st.success(f"Relay activated! Geyser ON at {best_time}. (SMS feature coming soon)")
+        st.success(f"Relay activated! Geyser ON at {best_time}.")
 
 st.info(f"AI recommends charging at **{best_time}** for maximum yield.")
 st.caption("Built with Raspberry Pi + AI | R99/month | Contact: [Your Email]")
