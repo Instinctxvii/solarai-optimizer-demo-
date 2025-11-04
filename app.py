@@ -95,12 +95,17 @@ if 'graph_relayout' not in st.session_state:
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.subheader("14-Day Solar Yield Forecast")  # ← FIXED LINE
+    st.subheader("14-Day Solar Yield Forecast")
 
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
                   title=f"GHI — {loc['name']} (Free Satellite Data)",
                   labels={'ghi': 'Yield (W/m²)', 'Time': 'Date & Time'})
-    fig.update_layout(height=400, margin=dict(l=40, r=40, t=40, b=40))
+    fig.update_layout(
+        height=400,
+        margin=dict(l=40, r=40, t=80, b=40),  # ↑ Fixed icon overlap
+        title_x=0.5,
+        title_font_size=16
+    )
     
     config = {
         'displayModeBar': True,
@@ -118,24 +123,22 @@ with col1:
         st.success("Graph reset!")
         st.rerun()
 
+    # EXPLANATION FOR GRAPH
     st.markdown("""
-### **How to Use (Easy as 1-2-3!)**
+**What is Solar Yield?**  
+→ **Solar Yield (W/m²)** = **How much sunlight hits your panel right now**.  
+→ **Higher number = more power** (e.g., 800 W/m² = full sun).  
+→ **0 at night** = no power.
 
-1. **Pick a location** → See real sunlight forecast  
-2. **Enter your system** → Get **exact R saved**  
-3. **Click "Simulate Charge"** → AI turns on geyser at peak
+**How to read the graph:**  
+1. **X-axis (bottom)** = Date & Time (next 14 days)  
+2. **Y-axis (left)** = Sunlight strength (0 to 1000 W/m²)  
+3. **Blue line** = AI’s forecast using **free satellite data**  
+4. **Peaks at 12 PM** = best time to charge geyser/battery
 
-**All data from free satellites + simple math.**
+**Example:** At **12:15 PM on Nov 10**, yield = **950 W/m²** → **perfect time to turn on geyser!**
 """)
 
 with col2:
     st.subheader("Live AI Insights")
     st.metric("Best Time to Charge", best_time)
-    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"R{saved_r/14:.0f}/week")
-    
-    if st.button("Simulate Charge Now", type="primary"):
-        st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f} (real data).")
-
-st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** for {daily_solar_kwh:.1f} kWh free power!")
-st.caption("R1,200 Raspberry Pi + AI | R99/month | Contact: [Your Email]")
