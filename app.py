@@ -150,4 +150,4 @@ with col2:
         st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f} (real data).")
 
 st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** for {daily_solar_kwh:.1f} kWh free power!")
-st.caption("R1,200 Raspberry Pi + AI | R99/month | Contact: [Your Email]")
+st.caption("R1,200 Raspberry Pi + AI | R99/month | Contact: [Keanu.kruger05@gmail.com]")
