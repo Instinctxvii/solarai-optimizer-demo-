@@ -27,11 +27,15 @@ col_auto, col_search = st.columns([1, 3])
 with col_auto:
     if st.button("Use My Location", type="secondary", use_container_width=True):
         st.session_state.gps_active = True
-        st.session_state.gps_start = time.time()
+        st.session_state.gps_start = time.time()  # ← FIXED: Always set here
         st.rerun()
 
-# === FAST GPS WITH PROGRESS ===
+# === FAST GPS WITH PROGRESS (NO ERROR) ===
 if st.session_state.get("gps_active", False):
+    # Ensure gps_start exists
+    if "gps_start" not in st.session_state:
+        st.session_state.gps_start = time.time()
+
     # Inject fast GPS
     location_js = """
     <script>
@@ -49,8 +53,8 @@ if st.session_state.get("gps_active", False):
             },
             { 
                 enableHighAccuracy: true, 
-                timeout: 5000,        // 5 sec max
-                maximumAge: 30000     // Use cached if <30s old
+                timeout: 5000,
+                maximumAge: 30000
             }
         );
     } else {
@@ -80,7 +84,7 @@ if st.session_state.get("gps_active", False):
         lon = float(query_params["lon"][0])
         try:
             response = requests.get(
-                f"https://nominatim.openstreetmap.org/reverse",
+                "https://nominatim.openstreetmap.org/reverse",
                 params={"lat": lat, "lon": lon, "format": "json", "countrycodes": "za", "addressdetails": 1},
                 headers={"User-Agent": "SolarcallAI/1.0"},
                 timeout=5
@@ -97,17 +101,26 @@ if st.session_state.get("gps_active", False):
             st.session_state.lon = lon
             status.success(f"**Detected: {location_name}**")
             st.experimental_set_query_params()
-            del st.session_state.gps_active
+            if "gps_active" in st.session_state:
+                del st.session_state.gps_active
+            if "gps_start" in st.session_state:
+                del st.session_state.gps_start
             st.rerun()
         except:
             status.error("Could not resolve location.")
             st.experimental_set_query_params()
-            del st.session_state.gps_active
+            if "gps_active" in st.session_state:
+                del st.session_state.gps_active
+            if "gps_start" in st.session_state:
+                del st.session_state.gps_start
     elif "gps_error" in query_params:
         msg = query_params["gps_error"][0]
         status.error(f"GPS Failed: {msg}")
         st.experimental_set_query_params()
-        del st.session_state.gps_active
+        if "gps_active" in st.session_state:
+            del st.session_state.gps_active
+        if "gps_start" in st.session_state:
+            del st.session_state.gps_start
 
 # === SEARCH BOX ===
 with col_search:
