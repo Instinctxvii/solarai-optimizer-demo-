@@ -1,91 +1,87 @@
-# solarai_pi5.py — FINAL PRODUCTION CODE
-# Runs 24/7 on Raspberry Pi 5 (8GB) — OFF-GRID, AI-DRIVEN, SMS-ONLY
-# No mobile app. No WiFi. No Eskom. No battery drain.
-
-import RPi.GPIO as GPIO
-import time
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from datetime import datetime, timedelta
 import requests
-from ina219 import INA219
-import logging
+import time
 
-# ==================== CONFIG ====================
-RELAY_PIN = 17
-SOLCAST_API_KEY = "YOUR_SOLCAST_KEY"  # Free tier
-LATITUDE = -26.2041   # Johannesburg (auto-detect later)
-LONGITUDE = 28.0473
-CLICKATELL_API = {
-    "api_id": "YOUR_ID",
-    "user": "your_user",
-    "password": "your_pass",
-    "to": "27xxxxxxxxx"  # Mom's number
+# === REFRESH BUTTON ===
+if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
+    st.success("Refreshing... Page will reload in 2 seconds.")
+    st.rerun()
+
+st.title("SolarAI Optimizer™")
+st.markdown("**AI-Powered Solar Intelligence | R99/month**")
+
+# === LOCATION BUTTON ===
+st.markdown("### Select Location")
+col_loc1, col_loc2 = st.columns(2)
+if col_loc1.button("Limpopo (Polokwane)", type="secondary", use_container_width=True):
+    st.session_state.location = "limpopo"
+if col_loc2.button("Nelspruit (Mpumalanga)", type="secondary", use_container_width=True):
+    st.session_state.location = "nelspruit"
+
+if 'location' not in st.session_state:
+    st.session_state.location = "limpopo"
+
+locations = {
+    "limpopo": {"name": "Limpopo (Polokwane)", "lat": -23.8962, "lon": 29.4486},
+    "nelspruit": {"name": "Nelspruit (Mbombela)", "lat": -25.4753, "lon": 30.9694}
 }
+loc = locations[st.session_state.location]
+st.markdown(f"**Current Location: {loc['name']}**")
 
-# Solar thresholds
-MIN_POWER_WATTS = 800      # Geyser ON only if solar > 800W
-MIN_PEAK_HOURS = 4         # Forecast must have 4+ hours >600 W/m²
-CHECK_INTERVAL = 60        # Seconds
+# === SIMULATED SOLAR FORECAST (No RPi.GPIO) ===
+@st.cache_data(ttl=3600)
+def get_solar_forecast(lat, lon):
+    # Fake realistic data (replace with Solcast later)
+    now = datetime.now()
+    index = pd.date_range(now, periods=336, freq='h')
+    hours = index.hour
+    seasonal = 1.2 if now.month in [11,12,1,2] else 0.8
+    ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
+    return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-# Setup logging
-logging.basicConfig(filename='/home/pi/solarai.log', level=logging.INFO,
-                    format='%(asctime)s - %(message)s')
+df = get_solar_forecast(loc['lat'], loc['lon'])
 
-# ==================== HARDWARE SETUP ====================
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(RELAY_PIN, GPIO.OUT)
-GPIO.output(RELAY_PIN, GPIO.LOW)  # Geyser OFF on boot
-
-ina = INA219(0.1)  # 0.1 ohm shunt
-ina.configure()
-
-# ==================== FUNCTIONS ====================
+# === SIMULATED SOLAR POWER (No INA219) ===
 def get_solar_power():
-    try:
-        return ina.power()
-    except:
-        return 0
-
-def get_peak_forecast():
-    try:
-        url = "https://api.solcast.com.au/radiation/forecasts"
-        params = {
-            "latitude": LATITUDE,
-            "longitude": LONGITUDE,
-            "api_key": SOLCAST_API_KEY,
-            "format": "json"
-        }
-        r = requests.get(url, params=params, timeout=10)
-        forecasts = r.json().get('forecasts', [])
-        peak_hours = sum(1 for h in forecasts if h['ghi'] > 600)
-        return peak_hours >= MIN_PEAK_HOURS
-    except Exception as e:
-        logging.error(f"Forecast error: {e}")
-        return False
-
-def send_sms(message):
-    try:
-        url = "https://api.clickatell.com/http/sendmsg"
-        params = CLICKATELL_API.copy()
-        params["text"] = message
-        requests.get(url, params=params, timeout=5)
-        logging.info(f"SMS sent: {message}")
-    except Exception as e:
-        logging.error(f"SMS failed: {e}")
-
-def control_geyser():
-    power = get_solar_power()
-    forecast_ok = get_peak_forecast()
-
-    if power > MIN_POWER_WATTS and forecast_ok:
-        GPIO.output(RELAY_PIN, GPIO.HIGH)
-        send_sms("Geyser ON — 2hr hot water (Solar only)")
-        logging.info(f"GEYSER ON | Power: {power}W")
+    # Fake 800W+ during peak hours
+    hour = datetime.now().hour
+    if 11 <= hour <= 14:
+        return random.randint(850, 1200)
     else:
-        GPIO.output(RELAY_PIN, GPIO.LOW)
-        if power <= MIN_POWER_WATTS:
-            logging.info(f"Geyser OFF | Low power: {power}W")
-        else:
-            logging.info(f"Geyser OFF | Forecast weak")
+        return random.randint(100, 500)
 
-# ==================== MAIN LOOP ====================
-if __name__ == "__main__":
-    logging
+# === SIMULATED SMS (No Clickatell) ===
+def send_sms(message):
+    st.success(f"📱 SMS SENT: {message}")
+    print(message)
+
+# === SIMULATED RELAY (No GPIO) ===
+def control_geyser(power, forecast_ok):
+    if power > 800 and forecast_ok:
+        st.success("🔌 GEYSER ON — Solar only!")
+        send_sms("Geyser ON — 2hr hot water (Solar only)")
+    else:
+        st.warning("🔌 Geyser OFF — Low sun")
+
+# Sidebar
+st.sidebar.header("Your Solar System")
+system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
+hours_used_per_day = st.sidebar.slider("Daily Usage (hours)", 4, 12, 6)
+tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2.50)
+
+# kWh & Savings
+avg_ghi = df['Solar Yield (W/m²)'].mean()
+daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
+total_solar_kwh = daily_solar_kwh * 14
+used_kwh = system_size_kw * hours_used_per_day * 14
+saved_kwh = min(total_solar_kwh, used_kwh)
+saved_r = saved_kwh * tariff_per_kwh
+
+# Best charge time
+next_24h = df.head(24)
+best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
+best_time = pd.Timestamp
