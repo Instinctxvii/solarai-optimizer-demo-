@@ -5,6 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import random
 import time
+import requests
 
 # === REFRESH BUTTON ===
 if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
@@ -12,40 +13,91 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
     time.sleep(2)
     st.rerun()
 
-# === TITLE — UPDATED TO SOLARCALLAI™ ===
+# === TITLE ===
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === LOCATION SELECTOR ===
-st.markdown("### Select Your Location")
-col_loc1, col_loc2 = st.columns(2)
+# === LOCATION INPUT: GOOGLE SEARCH + AUTO-DETECT ===
+st.markdown("### Enter Your Location")
 
-if col_loc1.button("Limpopo (Polokwane)", type="secondary", use_container_width=True):
-    st.session_state.location = "limpopo"
-if col_loc2.button("Nelspruit (Mpumalanga)", type="secondary", use_container_width=True):
-    st.session_state.location = "nelspruit"
+# Auto-detect button
+if st.button("Use My Current Location", type="secondary", use_container_width=True):
+    st.write("Getting location...")
+    location_js = """
+    <script>
+    if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+            function(position) {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                window.parent.postMessage({lat: lat, lon: lon}, "*");
+            },
+            function(error) {
+                window.parent.postMessage({error: error.message}, "*");
+            }
+        );
+    } else {
+        window.parent.postMessage({error: "Geolocation not supported"}, "*");
+    }
+    </script>
+    """
+    result = st.components.v1.html(location_js, height=0)
+    # Capture location from JS
+    if 'lat' in st.session_state and 'lon' in st.session_state:
+        lat, lon = st.session_state.lat, st.session_state.lon
+        try:
+            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
+            data = response.json()
+            city = data.get("address", {}).get("city", "Unknown")
+            st.session_state.location_name = f"{city} (Auto-Detected)"
+            st.session_state.lat = lat
+            st.session_state.lon = lon
+        except:
+            st.session_state.location_name = "Auto-Detected Location"
+    elif 'error' in st.session_state:
+        st.error(f"Location error: {st.session_state.error}")
+        del st.session_state.error
 
-if 'location' not in st.session_state:
-    st.session_state.location = "limpopo"
+# Google-style search box
+search_query = st.text_input("Or search for a city (e.g., Polokwane, Nelspruit)", placeholder="Type city name...")
+if search_query:
+    try:
+        response = requests.get(
+            f"https://nominatim.openstreetmap.org/search?q={search_query}&format=json&limit=1"
+        )
+        data = response.json()
+        if data:
+            lat = float(data[0]["lat"])
+            lon = float(data[0]["lon"])
+            city = data[0]["display_name"].split(",")[0]
+            st.session_state.location_name = f"{city}"
+            st.session_state.lat = lat
+            st.session_state.lon = lon
+            st.success(f"Found: {city}")
+        else:
+            st.warning("City not found. Try again.")
+    except:
+        st.error("Search failed. Check internet.")
 
-locations = {
-    "limpopo": {"name": "Limpopo (Polokwane)", "lat": -23.8962, "lon": 29.4486},
-    "nelspruit": {"name": "Nelspruit (Mbombela)", "lat": -25.4753, "lon": 30.9694}
-}
-loc = locations[st.session_state.location]
-st.markdown(f"**Current Location: {loc['name']}**")
+# Default fallback
+if 'location_name' not in st.session_state:
+    st.session_state.location_name = "Limpopo (Polokwane)"
+    st.session_state.lat = -23.8962
+    st.session_state.lon = 29.4486
+
+st.markdown(f"**Current Location: {st.session_state.location_name}**")
 
 # === SIMULATED SOLAR FORECAST ===
 @st.cache_data(ttl=3600)
-def get_solar_forecast():
+def get_solar_forecast(lat, lon):
     now = datetime.now()
-    index = pd.date_range(now, periods=336, freq='h')  # 14 days
+    index = pd.date_range(now, periods=336, freq='h')
     hours = index.hour
     seasonal = 1.2 if now.month in [11,12,1,2] else 0.8
     ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
     return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-df = get_solar_forecast()
+df = get_solar_forecast(st.session_state.lat, st.session_state.lon)
 
 # === SIMULATED CURRENT POWER ===
 def get_current_power():
@@ -94,9 +146,29 @@ col1, col2 = st.columns([2, 1])
 with col1:
     st.subheader("14-Day Solar Yield Forecast")
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
-                  title=f"AI Forecast — {loc['name']}",
+                  title=f"AI Forecast — {st.session_state.location_name}",
                   labels={'Solar Yield (W/m²)': 'Sunlight Strength (W/m²)'})
-    fig.update_layout(height=400, margin=dict(l=40 Rn, r=40, t=80, b=40), title_x=0.5)
+    fig.update_layout(height=400, margin=dict(l=40, r=40, t=80, b=40), title_x=0.5)
     st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
-    if st.button("Simulate Geyser Control", type="
+    if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
+        control_geyser()
+
+    st.markdown("""
+**How to Read the Graph:**
+1. **X-axis** = Next 14 days
+2. **Y-axis** = Sunlight strength (0–1000 W/m²)
+3. **Peak at 12 PM** = Best time to turn on geyser
+4. **AI only activates when sun > 800W**
+""")
+
+with col2:
+    st.subheader("Live AI Insights")
+    st.metric("Best Charge Time", best_time)
+    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
+    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
+    st.metric("Current Solar Power", f"{get_current_power()}W", "Peak Sun")
+
+st.info(f"AI says: **Charge at {best_time}** in **{st.session_state.location_name}** — Save R{saved_r:.0f} in 14 days!")
+
+st.caption("© 2025 SolarcallAI (Pty) Ltd | info@solarcallai.co.za | Built with Raspberry Pi 5 + AI")
