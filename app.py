@@ -20,7 +20,7 @@ if st.button("🔄 Refresh Demo (See Latest Changes)", type="primary", use_conta
 st.title("☀️ SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# --- Initialize state ---
+# --- Initialize session state ---
 if "location_name" not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
@@ -79,13 +79,12 @@ if search_query and len(search_query) > 2:
                     options.append((display, lat, lon))
 
             st.session_state.search_results = options
-
         else:
             st.warning("No SA locations found. Try 'Clivia', 'Soweto', or '123 Main St'.")
     except Exception as e:
         st.error(f"Search failed: {e}")
 
-# === DROPDOWN ===
+# === DROPDOWN SELECTION ===
 if st.session_state.search_results:
     option_names = [opt[0] for opt in st.session_state.search_results]
     selected_name = st.selectbox(
@@ -103,11 +102,11 @@ if st.session_state.search_results:
                 st.session_state.lat = lat
                 st.session_state.lon = lon
                 st.session_state.search_results = []  # clear list
-                st.session_state.search_input = ""  # clear text box
+                st.session_state.pop("search_input", None)  # ✅ safely clear input
                 st.success(f"📍 Selected: {name}")
                 st.experimental_rerun()
 
-st.markdown(f"**Current Location:** {st.session_state.location_name}")
+st.markdown(f"**Current Location:** {st.session_state.location_name}**")
 
 # === FORECAST RANGE & RESET ===
 col_range, col_reset = st.columns([1, 1])
