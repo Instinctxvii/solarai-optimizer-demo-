@@ -5,6 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import requests
 import time
+import random  # ← FIXED: Was missing!
 
 # === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
