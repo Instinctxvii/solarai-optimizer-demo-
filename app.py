@@ -20,7 +20,7 @@ st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
 # === LOCATION SEARCH: GOOGLE MAPS STYLE ===
-st.markdown("### Find Your Location")
+st.markdown("### Enter Your Location")
 
 # Auto-detect button
 col_auto, col_search = st.columns([1, 3])
@@ -50,8 +50,8 @@ with col_auto:
 # Search box with autocomplete
 with col_search:
     search_query = st.text_input(
-        "Or search city (e.g., Soweto, Cape Town, Durban)",
-        placeholder="Type your city...",
+        "Or search suburb/city (e.g., Valencia Park, Soweto, Cape Town)",
+        placeholder="Type suburb name...",
         key="search_input"
     )
 
@@ -60,37 +60,50 @@ if st.session_state.get("lat") and st.session_state.get("lon"):
     lat = st.session_state.lat
     lon = st.session_state.lon
     try:
-        response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
+        response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&countrycodes=za")
         data = response.json()
-        city = data.get("address", {}).get("city", data.get("address", {}).get("town", "Unknown"))
-        st.session_state.location_name = f"{city} (Auto-Detected)"
+        address = data.get("address", {})
+        suburb = address.get("suburb", address.get("neighborhood", "Unknown Suburb"))
+        city = address.get("city", address.get("town", "Unknown City"))
+        province = address.get("province", "Unknown Province")
+        st.session_state.location_name = f"{suburb}, {city}, {province}"
         st.session_state.lat = lat
         st.session_state.lon = lon
-        st.success(f"Location found: {city}")
+        st.success(f"Location found: {st.session_state.location_name}")
     except:
         st.session_state.location_name = "Auto-Detected Location"
 
 # Handle search query
 if search_query and len(search_query) > 2:
     try:
-        # Nominatim search with debounce
         response = requests.get(
             f"https://nominatim.openstreetmap.org/search",
-            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za"},
+            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "featureType": "suburb,neighborhood,town,city"},
             headers={"User-Agent": "SolarcallAI/1.0"}
         )
         results = response.json()
         if results:
-            options = {f"{r['display_name'].split(',')[0]}": (float(r["lat"]), float(r["lon"])) for r in results}
-            selected = st.selectbox("Select your location:", [""] + list(options.keys()))
+            options = []
+            for r in results:
+                address = r.get("address", {})
+                suburb = address.get("suburb", address.get("neighborhood", ""))
+                city = address.get("city", address.get("town", ""))
+                province = address.get("province", "")
+                display = f"{suburb or city}, {city or province}, {province or 'South Africa'}"
+                options.append((display, float(r["lat"]), float(r["lon"])))
+            selected = st.selectbox("Select your location:", [""] + [opt[0] for opt in options])
             if selected:
-                lat, lon = options[selected]
-                st.session_state.location_name = selected
-                st.session_state.lat = lat
-                st.session_state.lon = lon
-                st.success(f"Selected: {selected}")
+                for opt in options:
+                    if opt[0] == selected:
+                        st.session_state.location_name = selected
+                        st.session_state.lat = opt[1]
+                        st.session_state.lon = opt[2]
+                        st.success(f"Selected: {selected}")
+                        break
+        else:
+            st.warning("No SA locations found. Try 'Soweto' or 'Valencia Park'.")
     except:
-        st.error("Search failed. Try again.")
+        st.error("Search failed. Check internet.")
 
 # Fallback
 if 'location_name' not in st.session_state:
