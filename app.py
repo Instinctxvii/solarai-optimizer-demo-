@@ -78,7 +78,13 @@ if search_query and len(search_query) > 2:
     try:
         response = requests.get(
             f"https://nominatim.openstreetmap.org/search",
-            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "featureType": "suburb,neighborhood,town,city"},
+            params={
+                "q": search_query,
+                "format": "json",
+                "limit": 5,
+                "countrycodes": "za",
+                "featureType": "suburb,neighborhood,town,city"
+            },
             headers={"User-Agent": "SolarcallAI/1.0"}
         )
         results = response.json()
