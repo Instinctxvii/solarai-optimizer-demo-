@@ -26,50 +26,71 @@ st.markdown("### Enter Your Location")
 col_auto, col_search = st.columns([1, 3])
 with col_auto:
     if st.button("Use My Location", type="secondary", use_container_width=True):
-        st.write("Detecting GPS...")
-        location_js = """
-        <script>
-        if ("geolocation" in navigator) {
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    const url = window.location.href.split('?')[0] + '?lat=' + lat + '&lon=' + lon;
-                    window.location.href = url;
-                },
-                function(error) {
-                    window.parent.postMessage({error: error.message}, "*");
-                }
-            );
-        } else {
-            window.parent.postMessage({error: "Geolocation not supported"}, "*");
-        }
-        </script>
-        """
-        st.components.v1.html(location_js, height=0)
+        st.session_state.gps_active = True
+        st.session_state.gps_status = "Detecting GPS..."
+        st.rerun()
 
-# Capture GPS
-query_params = st.experimental_get_query_params()
-if "lat" in query_params and "lon" in query_params:
-    lat = float(query_params["lat"][0])
-    lon = float(query_params["lon"][0])
-    try:
-        response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
-        data = response.json()
-        address = data.get("address", {})
-        suburb = address.get("suburb", address.get("neighbourhood", address.get("village", "")))
-        city = address.get("city", address.get("town", ""))
-        province = address.get("province", address.get("state", ""))
-        location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
-        st.session_state.location_name = location_name
-        st.session_state.lat = lat
-        st.session_state.lon = lon
-        st.success(f"Location found: {location_name}")
+# === GPS DETECTION WITH LIVE DISPLAY ===
+if st.session_state.get("gps_active", False):
+    # Inject JS to get location
+    location_js = """
+    <script>
+    if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+            function(position) {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                const url = window.location.href.split('?')[0] + '?lat=' + lat + '&lon=' + lon;
+                window.location.href = url;
+            },
+            function(error) {
+                const url = window.location.href.split('?')[0] + '?gps_error=' + error.message;
+                window.location.href = url;
+            },
+            { timeout: 10000 }
+        );
+    } else {
+        const url = window.location.href.split('?')[0] + '?gps_error=Geolocation not supported';
+        window.location.href = url;
+    }
+    </script>
+    """
+    st.components.v1.html(location_js, height=0)
+
+    # Show live status
+    status_placeholder = st.empty()
+    status_placeholder.markdown("**Detecting GPS...**")
+
+    # Capture from URL
+    query_params = st.experimental_get_query_params()
+    if "lat" in query_params and "lon" in query_params:
+        lat = float(query_params["lat"][0])
+        lon = float(query_params["lon"][0])
+        try:
+            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
+            data = response.json()
+            address = data.get("address", {})
+            suburb = address.get("suburb", address.get("neighbourhood", address.get("village", "")))
+            city = address.get("city", address.get("town", ""))
+            province = address.get("province", address.get("state", ""))
+            location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
+            
+            # Update session and display
+            st.session_state.location_name = location_name
+            st.session_state.lat = lat
+            st.session_state.lon = lon
+            status_placeholder.success(f"Location detected: **{location_name}**")
+            st.experimental_set_query_params()
+            st.rerun()
+        except:
+            status_placeholder.error("Could not resolve address.")
+    elif "gps_error" in query_params:
+        error_msg = query_params["gps_error"][0]
+        status_placeholder.error(f"GPS Error: {error_msg}")
         st.experimental_set_query_params()
-    except:
-        st.error("Could not detect location.")
+        del st.session_state.gps_active
 
-# Search
+# === SEARCH BOX ===
 with col_search:
     search_query = st.text_input(
         "Or search suburb (e.g., Kimberley, Soweto, Valencia Park)",
@@ -108,13 +129,21 @@ if search_query and len(search_query) > 2:
     except:
         st.error("Search failed. Check internet.")
 
-# Fallback
+# === FALLBACK LOCATION ===
 if 'location_name' not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
     st.session_state.lon = 29.4486
 
 st.markdown(f"**Current Location: {st.session_state.location_name}**")
+
+# === FORECAST RANGE & RESET ===
+col_range, col_reset = st.columns([1, 1])
+with col_range:
+    days = st.radio("Forecast Range", [7, 14], horizontal=True, index=1)
+with col_reset:
+    if st.button("Reset Graph View", type="secondary"):
+        st.success("Graph reset!")
 
 # === REAL SOLAR FORECAST ===
 @st.cache_data(ttl=3600)
@@ -142,15 +171,6 @@ def get_real_solar_forecast(lat, lon, days=14):
         ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index)))
         return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-# Time range toggle
-col_range, col_reset = st.columns([1, 1])
-with col_range:
-    days = st.radio("Forecast Range", [7, 14], horizontal=True, index=1)
-with col_reset:
-    if st.button("Reset Graph View", type="secondary"):
-        st.session_state.pop('plotly_relayout', None)
-        st.success("Graph reset!")
-
 df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon, days=days)
 
 # === SIMULATED CURRENT POWER ===
@@ -158,16 +178,12 @@ def get_current_power():
     hour = datetime.now().hour
     return random.randint(850, 1200) if 11 <= hour <= 14 else random.randint(100, 500)
 
-# === SIMULATED SMS ===
-def send_sms(message):
-    st.success(f"SMS SENT: {message}")
-
-# === SIMULATED RELAY CONTROL ===
+# === SIMULATED CONTROL ===
 def control_geyser():
     power = get_current_power()
     if power > 800:
         st.success("GEYSER ON — 100% Solar Power!")
-        send_sms("Geyser ON — 2hr hot water (Solar only)")
+        st.success("SMS SENT: Geyser ON — 2hr hot water (free!)")
     else:
         st.warning("Geyser OFF — Low sun")
 
@@ -190,7 +206,7 @@ next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
 best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
-# === GRAPH WITH PRO CONTROLS ===
+# === INTERACTIVE GRAPH ===
 fig = px.line(
     df, x='Time', y='Solar Yield (W/m²)',
     title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
@@ -214,25 +230,21 @@ fig.update_layout(
     )
 )
 
-# Add reset capability
 config = {
-    'toImageButtonOptions': {'format': 'png', 'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_")}', 'height': 500, 'width': 800},
-    'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+    'toImageButtonOptions': {'format': 'png', 'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_")}'},
     'displaylogo': False
 }
 
 st.plotly_chart(fig, use_container_width=True, config=config)
 
-# === CONTROL BUTTON ===
 if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
     control_geyser()
 
 st.markdown("""
-**How to Use Graph:**
-- **Drag** to zoom • **Double-tap** to reset
-- **Save** as PNG (top-right)
-- **Toggle** 7 or 14 days
-- **Reset View** button above
+**Graph Controls:**  
+- **Drag** to zoom • **Double-tap** to reset  
+- **Save PNG** (top-right)  
+- **7 or 14 days** toggle above
 """)
 
 # === INSIGHTS ===
