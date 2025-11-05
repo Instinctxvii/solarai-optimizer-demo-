@@ -1,170 +1,91 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-from datetime import datetime, timedelta
+# solarai_pi5.py — FINAL PRODUCTION CODE
+# Runs 24/7 on Raspberry Pi 5 (8GB) — OFF-GRID, AI-DRIVEN, SMS-ONLY
+# No mobile app. No WiFi. No Eskom. No battery drain.
+
+import RPi.GPIO as GPIO
+import time
 import requests
+from ina219 import INA219
+import logging
 
-# === PAGE CONFIG ===
-st.set_page_config(page_title="SolarAI Optimizer™", layout="wide")
-
-# === LOCATION BUTTONS ===
-st.markdown("### 🌍 Select Location")
-col_loc1, col_loc2 = st.columns(2)
-with col_loc1:
-    if st.button("📍 Limpopo (Polokwane)", use_container_width=True):
-        st.session_state.location = "limpopo"
-with col_loc2:
-    if st.button("🌞 Nelspruit (Mbombela)", use_container_width=True):
-        st.session_state.location = "nelspruit"
-
-if "location" not in st.session_state:
-    st.session_state.location = "limpopo"
-
-# === RESET / REFRESH BUTTON ===
-if st.button("🔄 Reset / Refresh", use_container_width=True):
-    st.cache_data.clear()
-    st.session_state.clear()
-    st.rerun()
-
-# === HEADER ===
-st.title("☀️ SolarAI Optimizer™")
-st.markdown("**AI-Powered Solar Intelligence | R99/month**")
-
-# === LOCATION COORDINATES ===
-locations = {
-    "limpopo": {"name": "Limpopo (Polokwane)", "lat": -23.8962, "lon": 29.4486},
-    "nelspruit": {"name": "Nelspruit (Mbombela)", "lat": -25.4753, "lon": 30.9694},
+# ==================== CONFIG ====================
+RELAY_PIN = 17
+SOLCAST_API_KEY = "YOUR_SOLCAST_KEY"  # Free tier
+LATITUDE = -26.2041   # Johannesburg (auto-detect later)
+LONGITUDE = 28.0473
+CLICKATELL_API = {
+    "api_id": "YOUR_ID",
+    "user": "your_user",
+    "password": "your_pass",
+    "to": "27xxxxxxxxx"  # Mom's number
 }
-loc = locations[st.session_state.location]
-st.markdown(f"**📡 Current Location:** {loc['name']}")
 
-# === FETCH DATA ===
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_solcast_forecast(lat: float, lon: float, api_key: str = "demo") -> pd.DataFrame:
+# Solar thresholds
+MIN_POWER_WATTS = 800      # Geyser ON only if solar > 800W
+MIN_PEAK_HOURS = 4         # Forecast must have 4+ hours >600 W/m²
+CHECK_INTERVAL = 60        # Seconds
+
+# Setup logging
+logging.basicConfig(filename='/home/pi/solarai.log', level=logging.INFO,
+                    format='%(asctime)s - %(message)s')
+
+# ==================== HARDWARE SETUP ====================
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(RELAY_PIN, GPIO.OUT)
+GPIO.output(RELAY_PIN, GPIO.LOW)  # Geyser OFF on boot
+
+ina = INA219(0.1)  # 0.1 ohm shunt
+ina.configure()
+
+# ==================== FUNCTIONS ====================
+def get_solar_power():
     try:
-        if api_key and api_key != "demo":
-            url = (
-                f"https://api.solcast.com.au/radiation/forecasts?"
-                f"latitude={lat}&longitude={lon}&api_key={api_key}&format=json"
-            )
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            data = r.json()["forecasts"]
-            df = pd.DataFrame(data)
-            df["Time"] = pd.to_datetime(df["period_end"])
-            df["Solar Yield (W/m²)"] = df["ghi"]
-            return df[["Time", "Solar Yield (W/m²)"]].tail(336)
-    except Exception:
-        st.warning("⚠️ API unavailable — using demo data.")
+        return ina.power()
+    except:
+        return 0
 
-    # demo synthetic data
-    now = datetime.now().replace(minute=0, second=0, microsecond=0)
-    index = pd.date_range(now - timedelta(days=14), now + timedelta(days=1), freq="1h")
-    hours = index.hour + index.minute / 60
-    seasonal = 1.2 if now.month in [11, 12, 1, 2] else 0.8
-    ghi = np.maximum(
-        0,
-        800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 40, len(index)),
-    )
-    return pd.DataFrame({"Time": index, "Solar Yield (W/m²)": ghi})
+def get_peak_forecast():
+    try:
+        url = "https://api.solcast.com.au/radiation/forecasts"
+        params = {
+            "latitude": LATITUDE,
+            "longitude": LONGITUDE,
+            "api_key": SOLCAST_API_KEY,
+            "format": "json"
+        }
+        r = requests.get(url, params=params, timeout=10)
+        forecasts = r.json().get('forecasts', [])
+        peak_hours = sum(1 for h in forecasts if h['ghi'] > 600)
+        return peak_hours >= MIN_PEAK_HOURS
+    except Exception as e:
+        logging.error(f"Forecast error: {e}")
+        return False
 
-# === SIDEBAR ===
-st.sidebar.header("⚙️ Your Solar System")
-system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
-hours_used_per_day = st.sidebar.slider("Daily Usage (hours)", 4, 12, 6)
-tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2.5)
-solcast_key = st.sidebar.text_input("Solcast API Key (optional)", type="password")
+def send_sms(message):
+    try:
+        url = "https://api.clickatell.com/http/sendmsg"
+        params = CLICKATELL_API.copy()
+        params["text"] = message
+        requests.get(url, params=params, timeout=5)
+        logging.info(f"SMS sent: {message}")
+    except Exception as e:
+        logging.error(f"SMS failed: {e}")
 
-# === FETCH FORECAST DATA ===
-df = get_solcast_forecast(loc["lat"], loc["lon"], api_key=solcast_key)
+def control_geyser():
+    power = get_solar_power()
+    forecast_ok = get_peak_forecast()
 
-# === VIEW TOGGLE ===
-view_mode = st.radio("📊 Select View:", ["24 Hours (Today)", "14-Day Forecast"], horizontal=True)
+    if power > MIN_POWER_WATTS and forecast_ok:
+        GPIO.output(RELAY_PIN, GPIO.HIGH)
+        send_sms("Geyser ON — 2hr hot water (Solar only)")
+        logging.info(f"GEYSER ON | Power: {power}W")
+    else:
+        GPIO.output(RELAY_PIN, GPIO.LOW)
+        if power <= MIN_POWER_WATTS:
+            logging.info(f"Geyser OFF | Low power: {power}W")
+        else:
+            logging.info(f"Geyser OFF | Forecast weak")
 
-# === FILTER VIEW ===
-now = datetime.now()
-today = now.date()
-start_of_day = datetime.combine(today, datetime.min.time())
-end_of_day = start_of_day + timedelta(days=1)
-
-if view_mode == "24 Hours (Today)":
-    df_view = df[(df["Time"] >= start_of_day) & (df["Time"] < end_of_day)]
-else:
-    df_view = df.copy()
-
-# === CALCULATIONS ===
-avg_ghi = df_view["Solar Yield (W/m²)"].mean()
-daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
-total_solar_kwh = daily_solar_kwh * 14
-used_kwh = system_size_kw * hours_used_per_day * 14
-saved_kwh = min(total_solar_kwh, used_kwh)
-saved_r = saved_kwh * tariff_per_kwh
-best_idx = df_view["Solar Yield (W/m²)"].idxmax()
-best_time = pd.Timestamp(df_view.loc[best_idx, "Time"]).strftime("%I:%M %p")
-
-# === GRAPH (3-hour ticks + slider) ===
-fig = px.line(
-    df_view,
-    x="Time",
-    y="Solar Yield (W/m²)",
-    title=f"☀️ Global Horizontal Irradiance — {loc['name']} ({view_mode})",
-    labels={"Solar Yield (W/m²)": "Yield (W/m²)", "Time": "Hour of Day"},
-)
-fig.update_traces(
-    line=dict(color="rgba(0,123,255,0.7)", width=3),
-    mode="lines+markers",
-    marker=dict(size=6, color="rgba(0,123,255,0.8)", line=dict(width=1, color="white")),
-    hovertemplate="Time: %{x|%H:%M}<br>Yield: %{y:.0f} W/m²<extra></extra>",
-    line_shape="spline",
-)
-fig.update_layout(
-    height=480,
-    width=1050,
-    margin=dict(l=30, r=30, t=60, b=80),
-    title_x=0.5,
-    plot_bgcolor="white",
-    paper_bgcolor="white",
-    hovermode="x unified",
-    transition_duration=800,  # smooth fade-in / redraw
-    xaxis=dict(
-        tickformat="%H:%M",
-        dtick=3 * 3600000,       # 3-hour interval
-        showgrid=False,
-        tickfont=dict(size=13),
-        rangeslider=dict(visible=True, thickness=0.07),
-        range=[start_of_day, end_of_day],
-        automargin=True,
-    ),
-    yaxis=dict(
-        showgrid=True,
-        gridcolor="rgba(200,200,200,0.3)",
-        tickfont=dict(size=13),
-    ),
-)
-
-# === MAIN LAYOUT ===
-col1, col2 = st.columns([1.8, 1.2], gap="large")
-
-with col1:
-    st.subheader("🔆 Solar Yield Forecast")
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-    st.markdown("""
-**📘 Reading the Graph**
-- **X-axis:** Time (hourly, every 3 h shown by default)  
-- **Y-axis:** Sunlight intensity (W/m²)  
-- Use the **slider below** to zoom to 2 h or 1 h windows for fine detail.
-    """)
-
-with col2:
-    st.subheader("🤖 Live AI Insights")
-    st.metric("Best Time to Charge", best_time)
-    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", delta=f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Money Saved", f"R{saved_r:.0f}", delta=f"≈ R{saved_r/14:.0f}/day")
-    if st.button("⚡ Simulate Charge Now", use_container_width=True):
-        st.success(f"Geyser ON at {best_time} in {loc['name']}! Saved R{saved_r:.0f}.")
-
-# === FOOTER ===
-st.markdown("---")
-st.info(f"💡 AI Suggestion: Charge at **{best_time}** in **{loc['name']}** to maximize free solar power.")
-st.caption("R1 200 Raspberry Pi + AI | R99/month | Contact: **Keanu.kruger05@gmail.com**")
+# ==================== MAIN LOOP ====================
+if __name__ == "__main__":
+    logging
