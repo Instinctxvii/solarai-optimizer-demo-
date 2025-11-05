@@ -20,135 +20,63 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === LOCATION SEARCH ===
-st.markdown("### Enter Your Location")
+# === FULL SA STREET + SUBURB SEARCH ===
+st.markdown("### Enter Your Street or Suburb")
 
-col_auto, col_search = st.columns([1, 3])
-with col_auto:
-    if st.button("Use My Location", type="secondary", use_container_width=True):
-        st.session_state.gps_active = True
-        st.session_state.gps_start = time.time()  # ← FIXED: Always set here
-        st.rerun()
+search_query = st.text_input(
+    "Search any street or suburb in South Africa (e.g., Valencia Park, 123 Main St, Soweto, Nelspruit)",
+    placeholder="Type street or suburb name...",
+    key="search_input"
+)
 
-# === FAST GPS WITH PROGRESS (NO ERROR) ===
-if st.session_state.get("gps_active", False):
-    # Ensure gps_start exists
-    if "gps_start" not in st.session_state:
-        st.session_state.gps_start = time.time()
-
-    # Inject fast GPS
-    location_js = """
-    <script>
-    if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-            function(position) {
-                const lat = position.coords.latitude;
-                const lon = position.coords.longitude;
-                const url = window.location.href.split('?')[0] + '?lat=' + lat + '&lon=' + lon;
-                window.location.href = url;
-            },
-            function(error) {
-                const url = window.location.href.split('?')[0] + '?gps_error=' + error.message;
-                window.location.href = url;
-            },
-            { 
-                enableHighAccuracy: true, 
-                timeout: 5000,
-                maximumAge: 30000
-            }
-        );
-    } else {
-        const url = window.location.href.split('?')[0] + '?gps_error=Not supported';
-        window.location.href = url;
-    }
-    </script>
-    """
-    st.components.v1.html(location_js, height=0)
-
-    # Live countdown
-    elapsed = time.time() - st.session_state.gps_start
-    remaining = max(0, 5 - elapsed)
-    status = st.empty()
-
-    if remaining > 0:
-        status.markdown(f"**Detecting GPS... ({int(remaining)}s)**")
-        time.sleep(0.5)
-        st.rerun()
-    else:
-        status.markdown("**Detecting GPS...**")
-
-    # Capture result
-    query_params = st.experimental_get_query_params()
-    if "lat" in query_params and "lon" in query_params:
-        lat = float(query_params["lat"][0])
-        lon = float(query_params["lon"][0])
-        try:
-            response = requests.get(
-                "https://nominatim.openstreetmap.org/reverse",
-                params={"lat": lat, "lon": lon, "format": "json", "countrycodes": "za", "addressdetails": 1},
-                headers={"User-Agent": "SolarcallAI/1.0"},
-                timeout=5
-            )
-            data = response.json()
-            addr = data.get("address", {})
-            suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
-            city = addr.get("city", addr.get("town", ""))
-            province = addr.get("province", addr.get("state", ""))
-            location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
-
-            st.session_state.location_name = location_name
-            st.session_state.lat = lat
-            st.session_state.lon = lon
-            status.success(f"**Detected: {location_name}**")
-            st.experimental_set_query_params()
-            if "gps_active" in st.session_state:
-                del st.session_state.gps_active
-            if "gps_start" in st.session_state:
-                del st.session_state.gps_start
-            st.rerun()
-        except:
-            status.error("Could not resolve location.")
-            st.experimental_set_query_params()
-            if "gps_active" in st.session_state:
-                del st.session_state.gps_active
-            if "gps_start" in st.session_state:
-                del st.session_state.gps_start
-    elif "gps_error" in query_params:
-        msg = query_params["gps_error"][0]
-        status.error(f"GPS Failed: {msg}")
-        st.experimental_set_query_params()
-        if "gps_active" in st.session_state:
-            del st.session_state.gps_active
-        if "gps_start" in st.session_state:
-            del st.session_state.gps_start
-
-# === SEARCH BOX ===
-with col_search:
-    search_query = st.text_input(
-        "Or search suburb (e.g., Nelspruit, Soweto, Kimberley)",
-        placeholder="Type suburb name...",
-        key="search_input"
-    )
-
+# === LIVE SEARCH LOGIC ===
 if search_query and len(search_query) > 2:
     try:
         response = requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "addressdetails": 1},
+            params={
+                "q": search_query,
+                "format": "json",
+                "limit": 8,
+                "countrycodes": "za",
+                "addressdetails": 1,
+                "featuretype": "settlement,house,street"  # Prioritize streets & suburbs
+            },
             headers={"User-Agent": "SolarcallAI/1.0"},
             timeout=5
         )
         results = response.json()
+        
         if results:
             options = []
+            seen = set()
             for r in results:
                 addr = r.get("address", {})
+                # Extract full address
+                house = addr.get("house_number", "")
+                road = addr.get("road", addr.get("pedestrian", ""))
                 suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
-                city = addr.get("city", addr.get("town", ""))
+                city = addr.get("city", addr.get("town", addr.get("municipality", "")))
                 province = addr.get("province", addr.get("state", ""))
-                name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
-                options.append((name, float(r["lat"]), float(r["lon"])))
-            selected = st.selectbox("Select location:", [""] + [opt[0] for opt in options], key="location_select")
+                
+                # Build display name
+                parts = [p for p in [house, road, suburb, city, province] if p]
+                display = ", ".join(parts) if parts else r.get("display_name", "Unknown")
+                
+                # Avoid duplicates
+                if display not in seen:
+                    seen.add(display)
+                    lat = float(r["lat"])
+                    lon = float(r["lon"])
+                    options.append((display, lat, lon))
+            
+            # Show dropdown
+            selected = st.selectbox(
+                "Select your location:",
+                [""] + [opt[0] for opt in options],
+                key="location_select"
+            )
+            
             if selected:
                 for name, lat, lon in options:
                     if name == selected:
@@ -159,11 +87,11 @@ if search_query and len(search_query) > 2:
                         st.rerun()
                         break
         else:
-            st.warning("No SA locations found.")
-    except:
-        st.error("Search failed.")
+            st.warning("No SA locations found. Try 'Soweto', '123 Main St', or 'Valencia Park'.")
+    except Exception as e:
+        st.error(f"Search failed: {e}")
 
-# Fallback
+# === FALLBACK LOCATION ===
 if 'location_name' not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
@@ -241,19 +169,35 @@ next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
 best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
-# === GRAPH ===
-fig = px.line(df, x='Time', y='Solar Yield (W/m²)',
-              title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
-              labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'})
-fig.update_layout(height=450, hovermode='x unified', dragmode='zoom', title_x=0.5,
-                  xaxis=dict(rangeselector=dict(buttons=[
-                      dict(count=1, label="1d", step="day", stepmode="backward"),
-                      dict(count=7, label="7d", step="day", stepmode="backward"),
-                      dict(step="all")
-                  ]), rangeslider=dict(visible=True), type="date"))
+# === INTERACTIVE GRAPH ===
+fig = px.line(
+    df, x='Time', y='Solar Yield (W/m²)',
+    title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
+    labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'}
+)
+fig.update_layout(
+    height=450,
+    hovermode='x unified',
+    dragmode='zoom',
+    title_x=0.5,
+    xaxis=dict(
+        rangeselector=dict(buttons=[
+            dict(count=1, label="1d", step="day", stepmode="backward"),
+            dict(count=7, label="7d", step="day", stepmode="backward"),
+            dict(step="all")
+        ]),
+        rangeslider=dict(visible=True),
+        type="date"
+    )
+)
 
-config = {'toImageButtonOptions': {'format': 'png', 'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_")}'},
-          'displaylogo': False}
+config = {
+    'toImageButtonOptions': {
+        'format': 'png',
+        'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_").replace(" ", "_")}'
+    },
+    'displaylogo': False
+}
 
 st.plotly_chart(fig, use_container_width=True, config=config)
 
