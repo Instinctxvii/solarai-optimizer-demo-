@@ -12,9 +12,9 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
     time.sleep(2)
     st.rerun()
 
-# === TITLE ===
-st.title("SolarAI Optimizer™")
-st.markdown("**AI-Powered Solar Intelligence | R149/month | R0 Upfront**")
+# === TITLE — UPDATED TO SOLARCALLAI™ ===
+st.title("SolarcallAI™")
+st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
 # === LOCATION SELECTOR ===
 st.markdown("### Select Your Location")
@@ -96,27 +96,7 @@ with col1:
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
                   title=f"AI Forecast — {loc['name']}",
                   labels={'Solar Yield (W/m²)': 'Sunlight Strength (W/m²)'})
-    fig.update_layout(height=400, margin=dict(l=40, r=40, t=80, b=40), title_x=0.5)
+    fig.update_layout(height=400, margin=dict(l=40 Rn, r=40, t=80, b=40), title_x=0.5)
     st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
-    if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
-        control_geyser()
-
-    st.markdown("""
-**How to Read the Graph:**
-1. **X-axis** = Next 14 days
-2. **Y-axis** = Sunlight strength (0–1000 W/m²)
-3. **Peak at 12 PM** = Best time to turn on geyser
-4. **AI only activates when sun > 800W**
-""")
-
-with col2:
-    st.subheader("Live AI Insights")
-    st.metric("Best Charge Time", best_time)
-    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
-    st.metric("Current Solar Power", f"{get_current_power()}W", "Peak Sun")
-
-st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** — Save R{saved_r:.0f} in 14 days!")
-
-st.caption("© 2025 SolarAI (Pty) Ltd | info@solarai.co.za | Built with Raspberry Pi 5 + AI")
+    if st.button("Simulate Geyser Control", type="
