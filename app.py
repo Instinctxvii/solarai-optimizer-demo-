@@ -20,16 +20,25 @@ if st.button("🔄 Refresh Demo (See Latest Changes)", type="primary", use_conta
 st.title("☀️ SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
+# --- Initialize state ---
+if "location_name" not in st.session_state:
+    st.session_state.location_name = "Limpopo (Polokwane)"
+    st.session_state.lat = -23.8962
+    st.session_state.lon = 29.4486
+
+if "search_results" not in st.session_state:
+    st.session_state.search_results = []
+
 # === FULL SA STREET + SUBURB SEARCH ===
 st.markdown("### Enter Your Street or Suburb")
 
 search_query = st.text_input(
     "Search any street or suburb in South Africa",
     placeholder="Type street or suburb...",
-    key="search_input"
+    key="search_input",
 )
 
-# === LIVE SEARCH LOGIC (Streamlit-safe) ===
+# === LIVE SEARCH LOGIC ===
 if search_query and len(search_query) > 2:
     try:
         response = requests.get(
@@ -39,10 +48,10 @@ if search_query and len(search_query) > 2:
                 "format": "json",
                 "limit": 10,
                 "countrycodes": "za",
-                "addressdetails": 1
+                "addressdetails": 1,
             },
             headers={"User-Agent": "SolarcallAI/1.0"},
-            timeout=5
+            timeout=5,
         )
         results = response.json()
 
@@ -53,7 +62,10 @@ if search_query and len(search_query) > 2:
                 addr = r.get("address", {})
                 house = addr.get("house_number", "")
                 road = addr.get("road", addr.get("pedestrian", ""))
-                suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
+                suburb = addr.get(
+                    "suburb",
+                    addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))),
+                )
                 city = addr.get("city", addr.get("town", addr.get("municipality", "")))
                 province = addr.get("province", addr.get("state", ""))
 
@@ -66,34 +78,34 @@ if search_query and len(search_query) > 2:
                     lon = float(r["lon"])
                     options.append((display, lat, lon))
 
-            # === FIXED STREAMLIT DROPDOWN ===
-            option_names = [opt[0] for opt in options]
-            selected_name = st.selectbox(
-                "Select your location below:",
-                option_names,
-                index=0,
-                key="location_select",
-                help="Pick your exact street/suburb from OpenStreetMap results"
-            )
+            st.session_state.search_results = options
 
-            if selected_name:
-                for name, lat, lon in options:
-                    if name == selected_name:
-                        st.session_state.location_name = name
-                        st.session_state.lat = lat
-                        st.session_state.lon = lon
-                        st.success(f"📍 Selected: {name}")
-                        st.rerun()
         else:
             st.warning("No SA locations found. Try 'Clivia', 'Soweto', or '123 Main St'.")
     except Exception as e:
         st.error(f"Search failed: {e}")
 
-# === FALLBACK LOCATION ===
-if "location_name" not in st.session_state:
-    st.session_state.location_name = "Limpopo (Polokwane)"
-    st.session_state.lat = -23.8962
-    st.session_state.lon = 29.4486
+# === DROPDOWN ===
+if st.session_state.search_results:
+    option_names = [opt[0] for opt in st.session_state.search_results]
+    selected_name = st.selectbox(
+        "Select your location below:",
+        option_names,
+        index=None,
+        placeholder="Choose your address...",
+        key="location_select",
+    )
+
+    if selected_name:
+        for name, lat, lon in st.session_state.search_results:
+            if name == selected_name:
+                st.session_state.location_name = name
+                st.session_state.lat = lat
+                st.session_state.lon = lon
+                st.session_state.search_results = []  # clear list
+                st.session_state.search_input = ""  # clear text box
+                st.success(f"📍 Selected: {name}")
+                st.experimental_rerun()
 
 st.markdown(f"**Current Location:** {st.session_state.location_name}")
 
@@ -115,21 +127,23 @@ def get_real_solar_forecast(lat, lon, days=14):
         "longitude": lon,
         "hourly": "direct_normal_irradiance",
         "forecast_days": days,
-        "timezone": "Africa/Johannesburg"
+        "timezone": "Africa/Johannesburg",
     }
     try:
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         df = pd.DataFrame({
             "Time": pd.to_datetime(data["hourly"]["time"]),
-            "Solar Yield (W/m²)": data["hourly"]["direct_normal_irradiance"]
+            "Solar Yield (W/m²)": data["hourly"]["direct_normal_irradiance"],
         })
         return df
     except Exception:
         now = datetime.now()
         index = pd.date_range(now, periods=days * 24, freq="h")
         hours = index.hour
-        ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index)))
+        ghi = np.maximum(
+            0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index))
+        )
         return pd.DataFrame({"Time": index, "Solar Yield (W/m²)": ghi})
 
 df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon, days=days)
@@ -185,7 +199,7 @@ fig.update_layout(
             dict(step="all")
         ]),
         rangeslider=dict(visible=True),
-        type="date"
+        type="date",
     )
 )
 
@@ -194,7 +208,7 @@ config = {
         "format": "png",
         "filename": f"SolarcallAI_{st.session_state.location_name.replace(', ', '_').replace(' ', '_')}"
     },
-    "displaylogo": False
+    "displaylogo": False,
 }
 
 st.plotly_chart(fig, use_container_width=True, config=config)
