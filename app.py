@@ -13,7 +13,8 @@ st.set_page_config(page_title="SolarcallAI™", layout="wide")
 # === REFRESH BUTTON ===
 if st.button("🔄 Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
     st.success("Refreshing... Page will reload in 2 seconds.")
-    time.sleep(2)
+    time.sleep(1)
+    st.session_state.clear()
     st.rerun()
 
 # === TITLE ===
@@ -25,9 +26,10 @@ if "location_name" not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
     st.session_state.lon = 29.4486
-
 if "search_results" not in st.session_state:
     st.session_state.search_results = []
+if "should_rerun" not in st.session_state:
+    st.session_state.should_rerun = False
 
 # === FULL SA STREET + SUBURB SEARCH ===
 st.markdown("### Enter Your Street or Suburb")
@@ -101,10 +103,15 @@ if st.session_state.search_results:
                 st.session_state.location_name = name
                 st.session_state.lat = lat
                 st.session_state.lon = lon
-                st.session_state.search_results = []  # clear list
-                st.session_state.pop("search_input", None)  # ✅ safely clear input
-                st.success(f"📍 Selected: {name}")
-                st.experimental_rerun()
+                st.session_state.search_results = []
+                st.session_state.pop("search_input", None)
+                st.session_state.should_rerun = True
+                break
+
+# === SAFE RERUN FLAG ===
+if st.session_state.should_rerun:
+    st.session_state.should_rerun = False
+    st.rerun()
 
 st.markdown(f"**Current Location:** {st.session_state.location_name}**")
 
