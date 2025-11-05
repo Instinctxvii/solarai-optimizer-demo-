@@ -27,11 +27,12 @@ col_auto, col_search = st.columns([1, 3])
 with col_auto:
     if st.button("Use My Location", type="secondary", use_container_width=True):
         st.session_state.gps_active = True
-        st.session_state.gps_status = "Detecting GPS..."
+        st.session_state.gps_start = time.time()
         st.rerun()
 
-# === GPS LIVE DISPLAY ===
+# === FAST GPS WITH PROGRESS ===
 if st.session_state.get("gps_active", False):
+    # Inject fast GPS
     location_js = """
     <script>
     if ("geolocation" in navigator) {
@@ -46,52 +47,72 @@ if st.session_state.get("gps_active", False):
                 const url = window.location.href.split('?')[0] + '?gps_error=' + error.message;
                 window.location.href = url;
             },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+            { 
+                enableHighAccuracy: true, 
+                timeout: 5000,        // 5 sec max
+                maximumAge: 30000     // Use cached if <30s old
+            }
         );
     } else {
-        const url = window.location.href.split('?')[0] + '?gps_error=Geolocation not supported';
+        const url = window.location.href.split('?')[0] + '?gps_error=Not supported';
         window.location.href = url;
     }
     </script>
     """
     st.components.v1.html(location_js, height=0)
 
-    # Live status
-    status_placeholder = st.empty()
-    status_placeholder.markdown("**Detecting GPS...**")
+    # Live countdown
+    elapsed = time.time() - st.session_state.gps_start
+    remaining = max(0, 5 - elapsed)
+    status = st.empty()
 
-    # Capture GPS
+    if remaining > 0:
+        status.markdown(f"**Detecting GPS... ({int(remaining)}s)**")
+        time.sleep(0.5)
+        st.rerun()
+    else:
+        status.markdown("**Detecting GPS...**")
+
+    # Capture result
     query_params = st.experimental_get_query_params()
     if "lat" in query_params and "lon" in query_params:
         lat = float(query_params["lat"][0])
         lon = float(query_params["lon"][0])
         try:
-            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&countrycodes=za&addressdetails=1")
+            response = requests.get(
+                f"https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat, "lon": lon, "format": "json", "countrycodes": "za", "addressdetails": 1},
+                headers={"User-Agent": "SolarcallAI/1.0"},
+                timeout=5
+            )
             data = response.json()
             addr = data.get("address", {})
             suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
             city = addr.get("city", addr.get("town", ""))
             province = addr.get("province", addr.get("state", ""))
             location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
+
             st.session_state.location_name = location_name
             st.session_state.lat = lat
             st.session_state.lon = lon
-            status_placeholder.success(f"**Detected: {location_name}**")
+            status.success(f"**Detected: {location_name}**")
             st.experimental_set_query_params()
+            del st.session_state.gps_active
             st.rerun()
-        except Exception as e:
-            status_placeholder.error(f"GPS Error: {e}")
+        except:
+            status.error("Could not resolve location.")
             st.experimental_set_query_params()
+            del st.session_state.gps_active
     elif "gps_error" in query_params:
-        error_msg = query_params["gps_error"][0]
-        status_placeholder.error(f"GPS Error: {error_msg}")
+        msg = query_params["gps_error"][0]
+        status.error(f"GPS Failed: {msg}")
         st.experimental_set_query_params()
         del st.session_state.gps_active
 
 # === SEARCH BOX ===
 with col_search:
     search_query = st.text_input(
-        "Or search suburb (e.g., Valencia Park, Soweto, Kimberley)",
+        "Or search suburb (e.g., Nelspruit, Soweto, Kimberley)",
         placeholder="Type suburb name...",
         key="search_input"
     )
@@ -100,14 +121,9 @@ if search_query and len(search_query) > 2:
     try:
         response = requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": search_query,
-                "format": "json",
-                "limit": 5,
-                "countrycodes": "za",
-                "addressdetails": 1
-            },
-            headers={"User-Agent": "SolarcallAI/1.0"}
+            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "addressdetails": 1},
+            headers={"User-Agent": "SolarcallAI/1.0"},
+            timeout=5
         )
         results = response.json()
         if results:
@@ -130,9 +146,9 @@ if search_query and len(search_query) > 2:
                         st.rerun()
                         break
         else:
-            st.warning("No SA locations found. Try 'Soweto' or 'Kimberley'.")
-    except Exception as e:
-        st.error(f"Search failed: {e}")
+            st.warning("No SA locations found.")
+    except:
+        st.error("Search failed.")
 
 # Fallback
 if 'location_name' not in st.session_state:
@@ -163,7 +179,7 @@ def get_real_solar_forecast(lat, lon, days=14):
         "timezone": "Africa/Johannesburg"
     }
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)
         data = response.json()
         df = pd.DataFrame({
             "Time": pd.to_datetime(data["hourly"]["time"]),
@@ -184,16 +200,12 @@ def get_current_power():
     hour = datetime.now().hour
     return random.randint(850, 1200) if 11 <= hour <= 14 else random.randint(100, 500)
 
-# === SIMULATED SMS ===
-def send_sms(message):
-    st.success(f"SMS SENT: {message}")
-
-# === SIMULATED RELAY ===
+# === CONTROL ===
 def control_geyser():
     power = get_current_power()
     if power > 800:
         st.success("GEYSER ON — 100% Solar Power!")
-        send_sms("Geyser ON — 2hr hot water (Solar only)")
+        st.success("SMS SENT: Geyser ON — 2hr hot water (free!)")
     else:
         st.warning("Geyser OFF — Low sun")
 
@@ -216,46 +228,26 @@ next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
 best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
-# === INTERACTIVE GRAPH ===
-fig = px.line(
-    df, x='Time', y='Solar Yield (W/m²)',
-    title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
-    labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'}
-)
-fig.update_layout(
-    height=450,
-    hovermode='x unified',
-    dragmode='zoom',
-    title_x=0.5,
-    xaxis=dict(
-        rangeselector=dict(
-            buttons=list([
-                dict(count=1, label="1d", step="day", stepmode="backward"),
-                dict(count=7, label="7d", step="day", stepmode="backward"),
-                dict(step="all")
-            ])
-        ),
-        rangeslider=dict(visible=True),
-        type="date"
-    )
-)
+# === GRAPH ===
+fig = px.line(df, x='Time', y='Solar Yield (W/m²)',
+              title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
+              labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'})
+fig.update_layout(height=450, hovermode='x unified', dragmode='zoom', title_x=0.5,
+                  xaxis=dict(rangeselector=dict(buttons=[
+                      dict(count=1, label="1d", step="day", stepmode="backward"),
+                      dict(count=7, label="7d", step="day", stepmode="backward"),
+                      dict(step="all")
+                  ]), rangeslider=dict(visible=True), type="date"))
 
-config = {
-    'toImageButtonOptions': {'format': 'png', 'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_")}'},
-    'displaylogo': False
-}
+config = {'toImageButtonOptions': {'format': 'png', 'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_")}'},
+          'displaylogo': False}
 
 st.plotly_chart(fig, use_container_width=True, config=config)
 
 if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
     control_geyser()
 
-st.markdown("""
-**Graph Controls:**
-- **Drag** to zoom • **Double-tap** to reset  
-- **Save PNG** (top-right)  
-- **7 or 14 days** toggle above
-""")
+st.markdown("**Controls:** Drag to zoom • Double-tap to reset • Save PNG (top-right)")
 
 # === INSIGHTS ===
 col1, col2 = st.columns(2)
