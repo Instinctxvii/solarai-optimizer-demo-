@@ -5,7 +5,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 import requests
 import time
-import random  # ← FIXED: Was missing!
+import random
 
 # === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
@@ -20,7 +20,7 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === LOCATION SEARCH: GOOGLE MAPS STYLE ===
+# === LOCATION SEARCH ===
 st.markdown("### Enter Your Location")
 
 # Auto-detect button
@@ -35,7 +35,8 @@ with col_auto:
                 function(position) {
                     const lat = position.coords.latitude;
                     const lon = position.coords.longitude;
-                    window.parent.postMessage({lat: lat, lon: lon}, "*");
+                    const url = window.location.href.split('?')[0] + '?lat=' + lat + '&lon=' + lon;
+                    window.location.href = url;
                 },
                 function(error) {
                     window.parent.postMessage({error: error.message}, "*");
@@ -48,43 +49,46 @@ with col_auto:
         """
         st.components.v1.html(location_js, height=0)
 
-# Search box with autocomplete
+# Capture GPS from URL
+query_params = st.experimental_get_query_params()
+if "lat" in query_params and "lon" in query_params:
+    lat = float(query_params["lat"][0])
+    lon = float(query_params["lon"][0])
+    try:
+        response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
+        data = response.json()
+        address = data.get("address", {})
+        suburb = address.get("suburb", address.get("neighbourhood", address.get("village", "")))
+        city = address.get("city", address.get("town", ""))
+        province = address.get("province", address.get("state", ""))
+        location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
+        st.session_state.location_name = location_name
+        st.session_state.lat = lat
+        st.session_state.lon = lon
+        st.success(f"Location found: {location_name}")
+        st.experimental_set_query_params()  # Clear URL
+    except:
+        st.error("Could not detect location.")
+
+# Search box
 with col_search:
     search_query = st.text_input(
-        "Or search suburb/city (e.g., Valencia Park, Soweto, Cape Town)",
-        placeholder="Type suburb name...",
+        "Or search suburb (e.g., Kimberley, Soweto, Valencia Park)",
+        placeholder="Type your suburb...",
         key="search_input"
     )
 
-# Handle JS location
-if st.session_state.get("lat") and st.session_state.get("lon"):
-    lat = st.session_state.lat
-    lon = st.session_state.lon
-    try:
-        response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&countrycodes=za")
-        data = response.json()
-        address = data.get("address", {})
-        suburb = address.get("suburb", address.get("neighborhood", "Unknown Suburb"))
-        city = address.get("city", address.get("town", "Unknown City"))
-        province = address.get("province", "Unknown Province")
-        st.session_state.location_name = f"{suburb}, {city}, {province}"
-        st.session_state.lat = lat
-        st.session_state.lon = lon
-        st.success(f"Location found: {st.session_state.location_name}")
-    except:
-        st.session_state.location_name = "Auto-Detected Location"
-
-# Handle search query
+# Handle search
 if search_query and len(search_query) > 2:
     try:
         response = requests.get(
-            f"https://nominatim.openstreetmap.org/search",
+            "https://nominatim.openstreetmap.org/search",
             params={
                 "q": search_query,
                 "format": "json",
                 "limit": 5,
                 "countrycodes": "za",
-                "featureType": "suburb,neighborhood,town,city"
+                "addressdetails": 1
             },
             headers={"User-Agent": "SolarcallAI/1.0"}
         )
@@ -92,23 +96,23 @@ if search_query and len(search_query) > 2:
         if results:
             options = []
             for r in results:
-                address = r.get("address", {})
-                suburb = address.get("suburb", address.get("neighborhood", ""))
-                city = address.get("city", address.get("town", ""))
-                province = address.get("province", "")
-                display = f"{suburb or city}, {city or province}, {province or 'South Africa'}"
-                options.append((display, float(r["lat"]), float(r["lon"])))
-            selected = st.selectbox("Select your location:", [""] + [opt[0] for opt in options])
-            if selected:
-                for opt in options:
-                    if opt[0] == selected:
-                        st.session_state.location_name = selected
-                        st.session_state.lat = opt[1]
-                        st.session_state.lon = opt[2]
-                        st.success(f"Selected: {selected}")
-                        break
+                addr = r.get("address", {})
+                suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
+                city = addr.get("city", addr.get("town", ""))
+                province = addr.get("province", addr.get("state", ""))
+                name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
+                options.append((name, float(r["lat"]), float(r["lon"])))
+            selected = st.selectbox("Select location:", [opt[0] for opt in options], key="location_select")
+            for name, lat, lon in options:
+                if name == selected:
+                    st.session_state.location_name = name
+                    st.session_state.lat = lat
+                    st.session_state.lon = lon
+                    st.success(f"Selected: {name}")
+                    st.rerun()
+                    break
         else:
-            st.warning("No SA locations found. Try 'Soweto' or 'Valencia Park'.")
+            st.warning("No SA locations found. Try 'Kimberley' or 'Soweto'.")
     except:
         st.error("Search failed. Check internet.")
 
@@ -120,7 +124,7 @@ if 'location_name' not in st.session_state:
 
 st.markdown(f"**Current Location: {st.session_state.location_name}**")
 
-# === REAL SOLAR FORECAST (Open-Meteo API) ===
+# === REAL SOLAR FORECAST ===
 @st.cache_data(ttl=3600)
 def get_real_solar_forecast(lat, lon):
     url = "https://api.open-meteo.com/v1/forecast"
@@ -140,7 +144,6 @@ def get_real_solar_forecast(lat, lon):
         })
         return df
     except:
-        # Fallback to simulation
         now = datetime.now()
         index = pd.date_range(now, periods=336, freq='h')
         hours = index.hour
@@ -170,7 +173,7 @@ def control_geyser():
     else:
         st.warning("Geyser OFF — Low sun")
 
-# === SIDEBAR INPUTS ===
+# === SIDEBAR ===
 st.sidebar.header("Your Solar Setup")
 system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
 hours_used_per_day = st.sidebar.slider("Geyser Usage (hours/day)", 4, 12, 6)
@@ -185,7 +188,6 @@ saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * tariff_per_kwh
 weekly_savings = saved_r / 14
 
-# Best charge time
 next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
 best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
@@ -197,19 +199,19 @@ with col1:
     st.subheader("14-Day Solar Yield Forecast")
     fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
                   title=f"AI Forecast — {st.session_state.location_name}",
-                  labels={'Solar Yield (W/m²)': 'Sunlight Strength (W/m²)'})
-    fig.update_layout(height=400, margin=dict(l=40, r=40, t=80, b=40), title_x=0.5)
-    st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
+                  labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'})
+    fig.update_layout(height=400, title_x=0.5)
+    st.plotly_chart(fig, use_container_width=True)
 
     if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
         control_geyser()
 
     st.markdown("""
-**How to Read the Graph:**
+**How to Read:**
 1. **X-axis** = Next 14 days
-2. **Y-axis** = Real sunlight (W/m²)
-3. **Peak at 12 PM** = Best time to turn on geyser
-4. **AI only activates when sun > 800W**
+2. **Y-axis** = Real sunlight
+3. **Peak at 12 PM** = Best time
+4. **AI activates > 800W**
 """)
 
 with col2:
@@ -217,7 +219,7 @@ with col2:
     st.metric("Best Charge Time", best_time)
     st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
     st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
-    st.metric("Current Solar Power", f"{get_current_power()}W", "Peak Sun")
+    st.metric("Current Solar", f"{get_current_power()}W", "Peak Sun")
 
 st.info(f"AI says: **Charge at {best_time}** in **{st.session_state.location_name}** — Save R{saved_r:.0f} in 14 days!")
 
