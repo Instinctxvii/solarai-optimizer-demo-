@@ -23,7 +23,6 @@ st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 # === LOCATION SEARCH ===
 st.markdown("### Enter Your Location")
 
-# Auto-detect button
 col_auto, col_search = st.columns([1, 3])
 with col_auto:
     if st.button("Use My Location", type="secondary", use_container_width=True):
@@ -49,7 +48,7 @@ with col_auto:
         """
         st.components.v1.html(location_js, height=0)
 
-# Capture GPS from URL
+# Capture GPS
 query_params = st.experimental_get_query_params()
 if "lat" in query_params and "lon" in query_params:
     lat = float(query_params["lat"][0])
@@ -66,11 +65,11 @@ if "lat" in query_params and "lon" in query_params:
         st.session_state.lat = lat
         st.session_state.lon = lon
         st.success(f"Location found: {location_name}")
-        st.experimental_set_query_params()  # Clear URL
+        st.experimental_set_query_params()
     except:
         st.error("Could not detect location.")
 
-# Search box
+# Search
 with col_search:
     search_query = st.text_input(
         "Or search suburb (e.g., Kimberley, Soweto, Valencia Park)",
@@ -78,18 +77,11 @@ with col_search:
         key="search_input"
     )
 
-# Handle search
 if search_query and len(search_query) > 2:
     try:
         response = requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": search_query,
-                "format": "json",
-                "limit": 5,
-                "countrycodes": "za",
-                "addressdetails": 1
-            },
+            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "addressdetails": 1},
             headers={"User-Agent": "SolarcallAI/1.0"}
         )
         results = response.json()
@@ -126,13 +118,13 @@ st.markdown(f"**Current Location: {st.session_state.location_name}**")
 
 # === REAL SOLAR FORECAST ===
 @st.cache_data(ttl=3600)
-def get_real_solar_forecast(lat, lon):
+def get_real_solar_forecast(lat, lon, days=14):
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
         "hourly": "direct_normal_irradiance",
-        "forecast_days": 14,
+        "forecast_days": days,
         "timezone": "Africa/Johannesburg"
     }
     try:
@@ -145,20 +137,26 @@ def get_real_solar_forecast(lat, lon):
         return df
     except:
         now = datetime.now()
-        index = pd.date_range(now, periods=336, freq='h')
+        index = pd.date_range(now, periods=days*24, freq='h')
         hours = index.hour
         ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index)))
         return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon)
+# Time range toggle
+col_range, col_reset = st.columns([1, 1])
+with col_range:
+    days = st.radio("Forecast Range", [7, 14], horizontal=True, index=1)
+with col_reset:
+    if st.button("Reset Graph View", type="secondary"):
+        st.session_state.pop('plotly_relayout', None)
+        st.success("Graph reset!")
+
+df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon, days=days)
 
 # === SIMULATED CURRENT POWER ===
 def get_current_power():
     hour = datetime.now().hour
-    if 11 <= hour <= 14:
-        return random.randint(850, 1200)
-    else:
-        return random.randint(100, 500)
+    return random.randint(850, 1200) if 11 <= hour <= 14 else random.randint(100, 500)
 
 # === SIMULATED SMS ===
 def send_sms(message):
@@ -182,45 +180,70 @@ tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2
 # === CALCULATIONS ===
 avg_ghi = df['Solar Yield (W/m²)'].mean()
 daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
-total_solar_kwh = daily_solar_kwh * 14
-used_kwh = system_size_kw * hours_used_per_day * 14
+total_solar_kwh = daily_solar_kwh * days
+used_kwh = system_size_kw * hours_used_per_day * days
 saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * tariff_per_kwh
-weekly_savings = saved_r / 14
+weekly_savings = saved_r / days
 
 next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
 best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
-# === MAIN LAYOUT ===
-col1, col2 = st.columns([2, 1])
+# === GRAPH WITH PRO CONTROLS ===
+fig = px.line(
+    df, x='Time', y='Solar Yield (W/m²)',
+    title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
+    labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'}
+)
+fig.update_layout(
+    height=450,
+    hovermode='x unified',
+    dragmode='zoom',
+    title_x=0.5,
+    xaxis=dict(
+        rangeselector=dict(
+            buttons=list([
+                dict(count=1, label="1d", step="day", stepmode="backward"),
+                dict(count=7, label="7d", step="day", stepmode="backward"),
+                dict(step="all")
+            ])
+        ),
+        rangeslider=dict(visible=True),
+        type="date"
+    )
+)
 
-with col1:
-    st.subheader("14-Day Solar Yield Forecast")
-    fig = px.line(df, x='Time', y='Solar Yield (W/m²)', 
-                  title=f"AI Forecast — {st.session_state.location_name}",
-                  labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'})
-    fig.update_layout(height=400, title_x=0.5)
-    st.plotly_chart(fig, use_container_width=True)
+# Add reset capability
+config = {
+    'toImageButtonOptions': {'format': 'png', 'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_")}', 'height': 500, 'width': 800},
+    'modeBarButtonsToAdd': ['drawline', 'drawopenpath', 'eraseshape'],
+    'displaylogo': False
+}
 
-    if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
-        control_geyser()
+st.plotly_chart(fig, use_container_width=True, config=config)
 
-    st.markdown("""
-**How to Read:**
-1. **X-axis** = Next 14 days
-2. **Y-axis** = Real sunlight
-3. **Peak at 12 PM** = Best time
-4. **AI activates > 800W**
+# === CONTROL BUTTON ===
+if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
+    control_geyser()
+
+st.markdown("""
+**How to Use Graph:**
+- **Drag** to zoom • **Double-tap** to reset
+- **Save** as PNG (top-right)
+- **Toggle** 7 or 14 days
+- **Reset View** button above
 """)
 
-with col2:
-    st.subheader("Live AI Insights")
+# === INSIGHTS ===
+col1, col2 = st.columns(2)
+with col1:
     st.metric("Best Charge Time", best_time)
-    st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
     st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
+with col2:
+    st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
     st.metric("Current Solar", f"{get_current_power()}W", "Peak Sun")
 
-st.info(f"AI says: **Charge at {best_time}** in **{st.session_state.location_name}** — Save R{saved_r:.0f} in 14 days!")
+st.info(f"AI says: **Charge at {best_time}** in **{st.session_state.location_name}** — Save R{saved_r:.0f} in {days} days!")
 
 st.caption("© 2025 SolarcallAI (Pty) Ltd | info@solarcallai.co.za | Powered by Open-Meteo")
