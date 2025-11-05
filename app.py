@@ -3,9 +3,11 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
-import random
-import time
 import requests
+import time
+
+# === CONFIG ===
+st.set_page_config(page_title="SolarcallAI™", layout="wide")
 
 # === REFRESH BUTTON ===
 if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
@@ -17,69 +19,80 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === LOCATION INPUT: GOOGLE SEARCH + AUTO-DETECT ===
-st.markdown("### Enter Your Location")
+# === LOCATION SEARCH: GOOGLE MAPS STYLE ===
+st.markdown("### Find Your Location")
 
 # Auto-detect button
-if st.button("Use My Current Location", type="secondary", use_container_width=True):
-    st.write("Getting location...")
-    location_js = """
-    <script>
-    if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-            function(position) {
-                const lat = position.coords.latitude;
-                const lon = position.coords.longitude;
-                window.parent.postMessage({lat: lat, lon: lon}, "*");
-            },
-            function(error) {
-                window.parent.postMessage({error: error.message}, "*");
-            }
-        );
-    } else {
-        window.parent.postMessage({error: "Geolocation not supported"}, "*");
-    }
-    </script>
-    """
-    result = st.components.v1.html(location_js, height=0)
-    # Capture location from JS
-    if 'lat' in st.session_state and 'lon' in st.session_state:
-        lat, lon = st.session_state.lat, st.session_state.lon
-        try:
-            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
-            data = response.json()
-            city = data.get("address", {}).get("city", "Unknown")
-            st.session_state.location_name = f"{city} (Auto-Detected)"
-            st.session_state.lat = lat
-            st.session_state.lon = lon
-        except:
-            st.session_state.location_name = "Auto-Detected Location"
-    elif 'error' in st.session_state:
-        st.error(f"Location error: {st.session_state.error}")
-        del st.session_state.error
+col_auto, col_search = st.columns([1, 3])
+with col_auto:
+    if st.button("Use My Location", type="secondary", use_container_width=True):
+        st.write("Detecting GPS...")
+        location_js = """
+        <script>
+        if ("geolocation" in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    window.parent.postMessage({lat: lat, lon: lon}, "*");
+                },
+                function(error) {
+                    window.parent.postMessage({error: error.message}, "*");
+                }
+            );
+        } else {
+            window.parent.postMessage({error: "Geolocation not supported"}, "*");
+        }
+        </script>
+        """
+        st.components.v1.html(location_js, height=0)
 
-# Google-style search box
-search_query = st.text_input("Or search for a city (e.g., Polokwane, Nelspruit)", placeholder="Type city name...")
-if search_query:
+# Search box with autocomplete
+with col_search:
+    search_query = st.text_input(
+        "Or search city (e.g., Soweto, Cape Town, Durban)",
+        placeholder="Type your city...",
+        key="search_input"
+    )
+
+# Handle JS location
+if st.session_state.get("lat") and st.session_state.get("lon"):
+    lat = st.session_state.lat
+    lon = st.session_state.lon
     try:
-        response = requests.get(
-            f"https://nominatim.openstreetmap.org/search?q={search_query}&format=json&limit=1"
-        )
+        response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
         data = response.json()
-        if data:
-            lat = float(data[0]["lat"])
-            lon = float(data[0]["lon"])
-            city = data[0]["display_name"].split(",")[0]
-            st.session_state.location_name = f"{city}"
-            st.session_state.lat = lat
-            st.session_state.lon = lon
-            st.success(f"Found: {city}")
-        else:
-            st.warning("City not found. Try again.")
+        city = data.get("address", {}).get("city", data.get("address", {}).get("town", "Unknown"))
+        st.session_state.location_name = f"{city} (Auto-Detected)"
+        st.session_state.lat = lat
+        st.session_state.lon = lon
+        st.success(f"Location found: {city}")
     except:
-        st.error("Search failed. Check internet.")
+        st.session_state.location_name = "Auto-Detected Location"
 
-# Default fallback
+# Handle search query
+if search_query and len(search_query) > 2:
+    try:
+        # Nominatim search with debounce
+        response = requests.get(
+            f"https://nominatim.openstreetmap.org/search",
+            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za"},
+            headers={"User-Agent": "SolarcallAI/1.0"}
+        )
+        results = response.json()
+        if results:
+            options = {f"{r['display_name'].split(',')[0]}": (float(r["lat"]), float(r["lon"])) for r in results}
+            selected = st.selectbox("Select your location:", [""] + list(options.keys()))
+            if selected:
+                lat, lon = options[selected]
+                st.session_state.location_name = selected
+                st.session_state.lat = lat
+                st.session_state.lon = lon
+                st.success(f"Selected: {selected}")
+    except:
+        st.error("Search failed. Try again.")
+
+# Fallback
 if 'location_name' not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
@@ -87,17 +100,34 @@ if 'location_name' not in st.session_state:
 
 st.markdown(f"**Current Location: {st.session_state.location_name}**")
 
-# === SIMULATED SOLAR FORECAST ===
+# === REAL SOLAR FORECAST (Open-Meteo API) ===
 @st.cache_data(ttl=3600)
-def get_solar_forecast(lat, lon):
-    now = datetime.now()
-    index = pd.date_range(now, periods=336, freq='h')
-    hours = index.hour
-    seasonal = 1.2 if now.month in [11,12,1,2] else 0.8
-    ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) * seasonal + np.random.normal(0, 50, len(index)))
-    return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
+def get_real_solar_forecast(lat, lon):
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "direct_normal_irradiance",
+        "forecast_days": 14,
+        "timezone": "Africa/Johannesburg"
+    }
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        df = pd.DataFrame({
+            "Time": pd.to_datetime(data["hourly"]["time"]),
+            "Solar Yield (W/m²)": data["hourly"]["direct_normal_irradiance"]
+        })
+        return df
+    except:
+        # Fallback to simulation
+        now = datetime.now()
+        index = pd.date_range(now, periods=336, freq='h')
+        hours = index.hour
+        ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index)))
+        return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
-df = get_solar_forecast(st.session_state.lat, st.session_state.lon)
+df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon)
 
 # === SIMULATED CURRENT POWER ===
 def get_current_power():
@@ -157,7 +187,7 @@ with col1:
     st.markdown("""
 **How to Read the Graph:**
 1. **X-axis** = Next 14 days
-2. **Y-axis** = Sunlight strength (0–1000 W/m²)
+2. **Y-axis** = Real sunlight (W/m²)
 3. **Peak at 12 PM** = Best time to turn on geyser
 4. **AI only activates when sun > 800W**
 """)
@@ -171,4 +201,4 @@ with col2:
 
 st.info(f"AI says: **Charge at {best_time}** in **{st.session_state.location_name}** — Save R{saved_r:.0f} in 14 days!")
 
-st.caption("© 2025 SolarcallAI (Pty) Ltd | info@solarcallai.co.za | Built with Raspberry Pi 5 + AI")
+st.caption("© 2025 SolarcallAI (Pty) Ltd | info@solarcallai.co.za | Powered by Open-Meteo")
