@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 from datetime import datetime, timedelta
 import random
+import time
 
 # === REFRESH BUTTON ===
 if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
@@ -34,7 +35,7 @@ locations = {
 loc = locations[st.session_state.location]
 st.markdown(f"**Current Location: {loc['name']}**")
 
-# === SIMULATED SOLAR FORECAST (No API, No RPi) ===
+# === SIMULATED SOLAR FORECAST ===
 @st.cache_data(ttl=3600)
 def get_solar_forecast():
     now = datetime.now()
@@ -46,7 +47,7 @@ def get_solar_forecast():
 
 df = get_solar_forecast()
 
-# === SIMULATED CURRENT POWER (No INA219) ===
+# === SIMULATED CURRENT POWER ===
 def get_current_power():
     hour = datetime.now().hour
     if 11 <= hour <= 14:
@@ -54,14 +55,13 @@ def get_current_power():
     else:
         return random.randint(100, 500)
 
-# === SIMULATED SMS (No Clickatell) ===
+# === SIMULATED SMS ===
 def send_sms(message):
     st.success(f"SMS SENT: {message}")
 
-# === SIMULATED RELAY CONTROL (No GPIO) ===
+# === SIMULATED RELAY CONTROL ===
 def control_geyser():
     power = get_current_power()
-    forecast_ok = True  # Assume good forecast for demo
     if power > 800:
         st.success("GEYSER ON — 100% Solar Power!")
         send_sms("Geyser ON — 2hr hot water (Solar only)")
@@ -76,11 +76,12 @@ tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2
 
 # === CALCULATIONS ===
 avg_ghi = df['Solar Yield (W/m²)'].mean()
-daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5  # 5 peak sun hours
+daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
 total_solar_kwh = daily_solar_kwh * 14
 used_kwh = system_size_kw * hours_used_per_day * 14
 saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * tariff_per_kwh
+weekly_savings = saved_r / 14
 
 # Best charge time
 next_24h = df.head(24)
@@ -113,4 +114,9 @@ with col2:
     st.subheader("Live AI Insights")
     st.metric("Best Charge Time", best_time)
     st.metric("14-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{saved_r/14:.0
+    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
+    st.metric("Current Solar Power", f"{get_current_power()}W", "Peak Sun")
+
+st.info(f"AI says: **Charge at {best_time}** in **{loc['name']}** — Save R{saved_r:.0f} in 14 days!")
+
+st.caption("© 2025 SolarAI (Pty) Ltd | info@solarai.co.za | Built with Raspberry Pi 5 + AI")
