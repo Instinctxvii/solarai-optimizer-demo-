@@ -30,9 +30,8 @@ with col_auto:
         st.session_state.gps_status = "Detecting GPS..."
         st.rerun()
 
-# === GPS DETECTION WITH LIVE DISPLAY ===
+# === GPS LIVE DISPLAY ===
 if st.session_state.get("gps_active", False):
-    # Inject JS to get location
     location_js = """
     <script>
     if ("geolocation" in navigator) {
@@ -47,7 +46,7 @@ if st.session_state.get("gps_active", False):
                 const url = window.location.href.split('?')[0] + '?gps_error=' + error.message;
                 window.location.href = url;
             },
-            { timeout: 10000 }
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
         );
     } else {
         const url = window.location.href.split('?')[0] + '?gps_error=Geolocation not supported';
@@ -57,33 +56,32 @@ if st.session_state.get("gps_active", False):
     """
     st.components.v1.html(location_js, height=0)
 
-    # Show live status
+    # Live status
     status_placeholder = st.empty()
     status_placeholder.markdown("**Detecting GPS...**")
 
-    # Capture from URL
+    # Capture GPS
     query_params = st.experimental_get_query_params()
     if "lat" in query_params and "lon" in query_params:
         lat = float(query_params["lat"][0])
         lon = float(query_params["lon"][0])
         try:
-            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json")
+            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&countrycodes=za&addressdetails=1")
             data = response.json()
-            address = data.get("address", {})
-            suburb = address.get("suburb", address.get("neighbourhood", address.get("village", "")))
-            city = address.get("city", address.get("town", ""))
-            province = address.get("province", address.get("state", ""))
+            addr = data.get("address", {})
+            suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
+            city = addr.get("city", addr.get("town", ""))
+            province = addr.get("province", addr.get("state", ""))
             location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
-            
-            # Update session and display
             st.session_state.location_name = location_name
             st.session_state.lat = lat
             st.session_state.lon = lon
-            status_placeholder.success(f"Location detected: **{location_name}**")
+            status_placeholder.success(f"**Detected: {location_name}**")
             st.experimental_set_query_params()
             st.rerun()
-        except:
-            status_placeholder.error("Could not resolve address.")
+        except Exception as e:
+            status_placeholder.error(f"GPS Error: {e}")
+            st.experimental_set_query_params()
     elif "gps_error" in query_params:
         error_msg = query_params["gps_error"][0]
         status_placeholder.error(f"GPS Error: {error_msg}")
@@ -93,8 +91,8 @@ if st.session_state.get("gps_active", False):
 # === SEARCH BOX ===
 with col_search:
     search_query = st.text_input(
-        "Or search suburb (e.g., Kimberley, Soweto, Valencia Park)",
-        placeholder="Type your suburb...",
+        "Or search suburb (e.g., Valencia Park, Soweto, Kimberley)",
+        placeholder="Type suburb name...",
         key="search_input"
     )
 
@@ -102,7 +100,13 @@ if search_query and len(search_query) > 2:
     try:
         response = requests.get(
             "https://nominatim.openstreetmap.org/search",
-            params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "addressdetails": 1},
+            params={
+                "q": search_query,
+                "format": "json",
+                "limit": 5,
+                "countrycodes": "za",
+                "addressdetails": 1
+            },
             headers={"User-Agent": "SolarcallAI/1.0"}
         )
         results = response.json()
@@ -110,26 +114,27 @@ if search_query and len(search_query) > 2:
             options = []
             for r in results:
                 addr = r.get("address", {})
-                suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
+                suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
                 city = addr.get("city", addr.get("town", ""))
                 province = addr.get("province", addr.get("state", ""))
                 name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
                 options.append((name, float(r["lat"]), float(r["lon"])))
-            selected = st.selectbox("Select location:", [opt[0] for opt in options], key="location_select")
-            for name, lat, lon in options:
-                if name == selected:
-                    st.session_state.location_name = name
-                    st.session_state.lat = lat
-                    st.session_state.lon = lon
-                    st.success(f"Selected: {name}")
-                    st.rerun()
-                    break
+            selected = st.selectbox("Select location:", [""] + [opt[0] for opt in options], key="location_select")
+            if selected:
+                for name, lat, lon in options:
+                    if name == selected:
+                        st.session_state.location_name = name
+                        st.session_state.lat = lat
+                        st.session_state.lon = lon
+                        st.success(f"Selected: {name}")
+                        st.rerun()
+                        break
         else:
-            st.warning("No SA locations found. Try 'Kimberley' or 'Soweto'.")
-    except:
-        st.error("Search failed. Check internet.")
+            st.warning("No SA locations found. Try 'Soweto' or 'Kimberley'.")
+    except Exception as e:
+        st.error(f"Search failed: {e}")
 
-# === FALLBACK LOCATION ===
+# Fallback
 if 'location_name' not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
@@ -144,6 +149,7 @@ with col_range:
 with col_reset:
     if st.button("Reset Graph View", type="secondary"):
         st.success("Graph reset!")
+        st.rerun()
 
 # === REAL SOLAR FORECAST ===
 @st.cache_data(ttl=3600)
@@ -173,17 +179,21 @@ def get_real_solar_forecast(lat, lon, days=14):
 
 df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon, days=days)
 
-# === SIMULATED CURRENT POWER ===
+# === SIMULATED POWER ===
 def get_current_power():
     hour = datetime.now().hour
     return random.randint(850, 1200) if 11 <= hour <= 14 else random.randint(100, 500)
 
-# === SIMULATED CONTROL ===
+# === SIMULATED SMS ===
+def send_sms(message):
+    st.success(f"SMS SENT: {message}")
+
+# === SIMULATED RELAY ===
 def control_geyser():
     power = get_current_power()
     if power > 800:
         st.success("GEYSER ON — 100% Solar Power!")
-        st.success("SMS SENT: Geyser ON — 2hr hot water (free!)")
+        send_sms("Geyser ON — 2hr hot water (Solar only)")
     else:
         st.warning("Geyser OFF — Low sun")
 
@@ -241,7 +251,7 @@ if st.button("Simulate Geyser Control", type="primary", use_container_width=True
     control_geyser()
 
 st.markdown("""
-**Graph Controls:**  
+**Graph Controls:**
 - **Drag** to zoom • **Double-tap** to reset  
 - **Save PNG** (top-right)  
 - **7 or 14 days** toggle above
