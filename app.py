@@ -24,8 +24,8 @@ st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 st.markdown("### Enter Your Street or Suburb")
 
 search_query = st.text_input(
-    "Search any street or suburb in South Africa (e.g., Valencia Park, 123 Main St, Soweto, Nelspruit)",
-    placeholder="Type street or suburb name...",
+    "Search any street or suburb in South Africa",
+    placeholder="Type street or suburb...",
     key="search_input"
 )
 
@@ -37,10 +37,9 @@ if search_query and len(search_query) > 2:
             params={
                 "q": search_query,
                 "format": "json",
-                "limit": 8,
+                "limit": 10,
                 "countrycodes": "za",
-                "addressdetails": 1,
-                "featuretype": "settlement,house,street"  # Prioritize streets & suburbs
+                "addressdetails": 1
             },
             headers={"User-Agent": "SolarcallAI/1.0"},
             timeout=5
@@ -52,42 +51,104 @@ if search_query and len(search_query) > 2:
             seen = set()
             for r in results:
                 addr = r.get("address", {})
-                # Extract full address
                 house = addr.get("house_number", "")
                 road = addr.get("road", addr.get("pedestrian", ""))
                 suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
                 city = addr.get("city", addr.get("town", addr.get("municipality", "")))
                 province = addr.get("province", addr.get("state", ""))
                 
-                # Build display name
                 parts = [p for p in [house, road, suburb, city, province] if p]
                 display = ", ".join(parts) if parts else r.get("display_name", "Unknown")
                 
-                # Avoid duplicates
                 if display not in seen:
                     seen.add(display)
                     lat = float(r["lat"])
                     lon = float(r["lon"])
                     options.append((display, lat, lon))
             
-            # Show dropdown
-            selected = st.selectbox(
-                "Select your location:",
-                [""] + [opt[0] for opt in options],
-                key="location_select"
-            )
-            
-            if selected:
-                for name, lat, lon in options:
-                    if name == selected:
-                        st.session_state.location_name = name
-                        st.session_state.lat = lat
-                        st.session_state.lon = lon
-                        st.success(f"Selected: {name}")
-                        st.rerun()
-                        break
+            # === CUSTOM FULL-TEXT DROPDOWN ===
+            if options:
+                # Create a unique key for this session
+                dropdown_key = f"location_select_{hash(search_query)}"
+                
+                # Use HTML + JS for full-width, scrollable dropdown
+                dropdown_html = """
+                <style>
+                .full-dropdown {
+                    width: 100%;
+                    max-height: 300px;
+                    overflow-y: auto;
+                    border: 1px solid #444;
+                    border-radius: 8px;
+                    background: #1e1e1e;
+                    padding: 8px;
+                    font-size: 14px;
+                    color: white;
+                }
+                .dropdown-option {
+                    padding: 10px;
+                    border-bottom: 1px solid #333;
+                    cursor: pointer;
+                    white-space: normal;
+                    word-wrap: break-word;
+                }
+                .dropdown-option:hover {
+                    background: #333;
+                }
+                .dropdown-option:last-child {
+                    border-bottom: none;
+                }
+                </style>
+                <div class="full-dropdown" id="dropdown">
+                """
+                
+                for i, (name, lat, lon) in enumerate(options):
+                    js_action = f"window.parent.postMessage({{type: 'select_location', index: {i}}}, '*');"
+                    dropdown_html += f"""
+                    <div class="dropdown-option" onclick="{js_action}">
+                        {name}
+                    </div>
+                    """
+                
+                dropdown_html += "</div>"
+                
+                # Render dropdown
+                dropdown_component = st.components.v1.html(
+                    dropdown_html + f"""
+                    <script>
+                    // Listen for selection
+                    window.addEventListener('message', function(event) {{
+                        if (event.data.type === 'select_location') {{
+                            const index = event.data.index;
+                            const locations = {options};
+                            const selected = locations[index];
+                            // Send to Streamlit
+                            window.parent.postMessage({{
+                                type: 'streamlit:setComponentValue',
+                                key: '{dropdown_key}',
+                                value: selected[0] + '|' + selected[1] + '|' + selected[2]
+                            }}, '*');
+                        }}
+                    }});
+                    </script>
+                    """,
+                    height=320
+                )
+                
+                # Capture selection via session state
+                if st.session_state.get(dropdown_key):
+                    value = st.session_state[dropdown_key]
+                    name, lat, lon = value.split('|')
+                    lat, lon = float(lat), float(lon)
+                    st.session_state.location_name = name
+                    st.session_state.lat = lat
+                    st.session_state.lon = lon
+                    st.success(f"Selected: {name}")
+                    del st.session_state[dropdown_key]
+                    st.rerun()
+                    
         else:
-            st.warning("No SA locations found. Try 'Soweto', '123 Main St', or 'Valencia Park'.")
+            st.warning("No SA locations found. Try 'Clivia', 'Soweto', or '123 Main St'.")
     except Exception as e:
         st.error(f"Search failed: {e}")
 
