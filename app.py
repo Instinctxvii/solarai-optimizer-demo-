@@ -2,118 +2,114 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 import time
 import random
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 # === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
 
 # === REFRESH BUTTON ===
-if st.button("🔄 Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
+if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_width=True):
     st.success("Refreshing... Page will reload in 2 seconds.")
-    time.sleep(1)
-    st.session_state.clear()
+    time.sleep(2)
     st.rerun()
 
 # === TITLE ===
-st.title("☀️ SolarcallAI™")
+st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# --- Initialize session state ---
-if "location_name" not in st.session_state:
-    st.session_state.location_name = "Limpopo (Polokwane)"
-    st.session_state.lat = -23.8962
-    st.session_state.lon = 29.4486
-if "search_results" not in st.session_state:
-    st.session_state.search_results = []
-if "should_rerun" not in st.session_state:
-    st.session_state.should_rerun = False
+# === SAFE NOMINATIM SEARCH (FIXED) ===
+def safe_nominatim_search(query):
+    if not query or len(query) < 2:
+        return []
+    
+    session = requests.Session()
+    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+    
+    try:
+        response = session.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": query,
+                "format": "json",
+                "limit": 10,
+                "countrycodes": "za",
+                "addressdetails": 1
+            },
+            headers={"User-Agent": "SolarcallAI/1.0 (+info@solarcallai.co.za)"},
+            timeout=10
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Search temporarily unavailable. Try again in 5 seconds.")
+        time.sleep(1)
+        return []
 
 # === FULL SA STREET + SUBURB SEARCH ===
 st.markdown("### Enter Your Street or Suburb")
 
 search_query = st.text_input(
-    "Search any street or suburb in South Africa",
+    "Search any street or suburb in South Africa (e.g., Clivia, 114 Clivia Street, Soweto)",
     placeholder="Type street or suburb...",
-    key="search_input",
+    key="search_input"
 )
 
-# === LIVE SEARCH LOGIC ===
+# === LIVE SEARCH LOGIC (FIXED) ===
 if search_query and len(search_query) > 2:
-    try:
-        response = requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": search_query,
-                "format": "json",
-                "limit": 10,
-                "countrycodes": "za",
-                "addressdetails": 1,
-            },
-            headers={"User-Agent": "SolarcallAI/1.0"},
-            timeout=5,
-        )
-        results = response.json()
+    with st.spinner("Searching South Africa..."):
+        results = safe_nominatim_search(search_query)
+    
+    if results:
+        options = []
+        seen = set()
+        for r in results:
+            addr = r.get("address", {})
+            house = addr.get("house_number", "")
+            road = addr.get("road", addr.get("pedestrian", ""))
+            suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
+            city = addr.get("city", addr.get("town", addr.get("municipality", "")))
+            province = addr.get("province", addr.get("state", ""))
+            
+            parts = [p for p in [house, road, suburb, city, province] if p]
+            display = ", ".join(parts) if parts else r.get("display_name", "Unknown")
+            
+            if display not in seen:
+                seen.add(display)
+                lat = float(r["lat"])
+                lon = float(r["lon"])
+                options.append((display, lat, lon))
+        
+        if options:
+            selected = st.selectbox(
+                "Select your location:",
+                [""] + [opt[0] for opt in options],
+                key="location_select"
+            )
+            if selected:
+                for name, lat, lon in options:
+                    if name == selected:
+                        st.session_state.location_name = name
+                        st.session_state.lat = lat
+                        st.session_state.lon = lon
+                        st.success(f"Selected: {name}")
+                        st.rerun()
+                        break
+    else:
+        st.warning("No SA locations found. Try '114 Clivia Street' or 'Soweto'.")
 
-        if results:
-            options = []
-            seen = set()
-            for r in results:
-                addr = r.get("address", {})
-                house = addr.get("house_number", "")
-                road = addr.get("road", addr.get("pedestrian", ""))
-                suburb = addr.get(
-                    "suburb",
-                    addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))),
-                )
-                city = addr.get("city", addr.get("town", addr.get("municipality", "")))
-                province = addr.get("province", addr.get("state", ""))
+# === FALLBACK LOCATION ===
+if 'location_name' not in st.session_state:
+    st.session_state.location_name = "Limpopo (Polokwane)"
+    st.session_state.lat = -23.8962
+    st.session_state.lon = 29.4486
 
-                parts = [p for p in [house, road, suburb, city, province] if p]
-                display = ", ".join(parts) if parts else r.get("display_name", "Unknown")
-
-                if display not in seen:
-                    seen.add(display)
-                    lat = float(r["lat"])
-                    lon = float(r["lon"])
-                    options.append((display, lat, lon))
-
-            st.session_state.search_results = options
-        else:
-            st.warning("No SA locations found. Try 'Clivia', 'Soweto', or '123 Main St'.")
-    except Exception as e:
-        st.error(f"Search failed: {e}")
-
-# === DROPDOWN SELECTION ===
-if st.session_state.search_results:
-    option_names = [opt[0] for opt in st.session_state.search_results]
-    selected_name = st.selectbox(
-        "Select your location below:",
-        option_names,
-        index=None,
-        placeholder="Choose your address...",
-        key="location_select",
-    )
-
-    if selected_name:
-        for name, lat, lon in st.session_state.search_results:
-            if name == selected_name:
-                st.session_state.location_name = name
-                st.session_state.lat = lat
-                st.session_state.lon = lon
-                st.session_state.search_results = []
-                st.session_state.pop("search_input", None)
-                st.session_state.should_rerun = True
-                break
-
-# === SAFE RERUN FLAG ===
-if st.session_state.should_rerun:
-    st.session_state.should_rerun = False
-    st.rerun()
-
-st.markdown(f"**Current Location:** {st.session_state.location_name}**")
+st.markdown(f"**Current Location: {st.session_state.location_name}**")
 
 # === FORECAST RANGE & RESET ===
 col_range, col_reset = st.columns([1, 1])
@@ -133,24 +129,22 @@ def get_real_solar_forecast(lat, lon, days=14):
         "longitude": lon,
         "hourly": "direct_normal_irradiance",
         "forecast_days": days,
-        "timezone": "Africa/Johannesburg",
+        "timezone": "Africa/Johannesburg"
     }
     try:
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         df = pd.DataFrame({
             "Time": pd.to_datetime(data["hourly"]["time"]),
-            "Solar Yield (W/m²)": data["hourly"]["direct_normal_irradiance"],
+            "Solar Yield (W/m²)": data["hourly"]["direct_normal_irradiance"]
         })
         return df
-    except Exception:
+    except:
         now = datetime.now()
-        index = pd.date_range(now, periods=days * 24, freq="h")
+        index = pd.date_range(now, periods=days*24, freq='h')
         hours = index.hour
-        ghi = np.maximum(
-            0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index))
-        )
-        return pd.DataFrame({"Time": index, "Solar Yield (W/m²)": ghi})
+        ghi = np.maximum(0, 800 * np.sin((hours - 12) * np.pi / 12) + np.random.normal(0, 50, len(index)))
+        return pd.DataFrame({'Time': index, 'Solar Yield (W/m²)': ghi})
 
 df = get_real_solar_forecast(st.session_state.lat, st.session_state.lon, days=days)
 
@@ -163,19 +157,19 @@ def get_current_power():
 def control_geyser():
     power = get_current_power()
     if power > 800:
-        st.success("💧 GEYSER ON — 100% Solar Power!")
-        st.success("📲 SMS SENT: Geyser ON — 2hr hot water (free!)")
+        st.success("GEYSER ON — 100% Solar Power!")
+        st.success("SMS SENT: Geyser ON — 2hr hot water (free!)")
     else:
-        st.warning("⚠️ Geyser OFF — Low sun detected")
+        st.warning("Geyser OFF — Low sun")
 
 # === SIDEBAR ===
-st.sidebar.header("⚙️ Your Solar Setup")
+st.sidebar.header("Your Solar Setup")
 system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
 hours_used_per_day = st.sidebar.slider("Geyser Usage (hours/day)", 4, 12, 6)
 tariff_per_kwh = st.sidebar.number_input("Electricity Cost (R/kWh)", 2.0, 6.0, 2.50)
 
 # === CALCULATIONS ===
-avg_ghi = df["Solar Yield (W/m²)"].mean()
+avg_ghi = df['Solar Yield (W/m²)'].mean()
 daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
 total_solar_kwh = daily_solar_kwh * days
 used_kwh = system_size_kw * hours_used_per_day * days
@@ -184,19 +178,19 @@ saved_r = saved_kwh * tariff_per_kwh
 weekly_savings = saved_r / days
 
 next_24h = df.head(24)
-best_hour = next_24h["Solar Yield (W/m²)"].idxmax()
-best_time = pd.Timestamp(df.loc[best_hour, "Time"]).strftime("%I:%M %p")
+best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
+best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
 # === INTERACTIVE GRAPH ===
 fig = px.line(
-    df, x="Time", y="Solar Yield (W/m²)",
+    df, x='Time', y='Solar Yield (W/m²)',
     title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
-    labels={"Solar Yield (W/m²)": "Sunlight (W/m²)"}
+    labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'}
 )
 fig.update_layout(
     height=450,
-    hovermode="x unified",
-    dragmode="zoom",
+    hovermode='x unified',
+    dragmode='zoom',
     title_x=0.5,
     xaxis=dict(
         rangeselector=dict(buttons=[
@@ -205,21 +199,21 @@ fig.update_layout(
             dict(step="all")
         ]),
         rangeslider=dict(visible=True),
-        type="date",
+        type="date"
     )
 )
 
 config = {
-    "toImageButtonOptions": {
-        "format": "png",
-        "filename": f"SolarcallAI_{st.session_state.location_name.replace(', ', '_').replace(' ', '_')}"
+    'toImageButtonOptions': {
+        'format': 'png',
+        'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_").replace(" ", "_")}'
     },
-    "displaylogo": False,
+    'displaylogo': False
 }
 
 st.plotly_chart(fig, use_container_width=True, config=config)
 
-if st.button("🚿 Simulate Geyser Control", type="primary", use_container_width=True):
+if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
     control_geyser()
 
 st.markdown("**Controls:** Drag to zoom • Double-tap to reset • Save PNG (top-right)")
