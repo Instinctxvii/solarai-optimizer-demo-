@@ -7,7 +7,6 @@ import requests
 import time
 import random
 
-# === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
 
 # === REFRESH ===
@@ -16,7 +15,6 @@ if st.button("Refresh Demo", type="primary", use_container_width=True):
     time.sleep(1)
     st.rerun()
 
-# === TITLE ===
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
@@ -30,10 +28,10 @@ with col_auto:
         st.session_state.gps_active = True
         st.rerun()
 
-# === GPS ===
+# === GPS (FULL ADDRESS) ===
 if st.session_state.get("gps_active", False):
     status = st.empty()
-    status.markdown("**Finding your street...**")
+    status.markdown("**Finding your full address...**")
 
     js = """
     <script>
@@ -59,31 +57,34 @@ if st.session_state.get("gps_active", False):
             url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1"
             data = requests.get(url, headers={"User-Agent": "SolarcallAI/1.0"}, timeout=10).json()
             addr = data.get("address", {})
-            road = addr.get("road", addr.get("pedestrian", ""))
+            
             house = addr.get("house_number", "")
-            suburb = addr.get("suburb", addr.get("neighbourhood", ""))
+            road = addr.get("road", addr.get("pedestrian", ""))
+            suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
             city = addr.get("city", addr.get("town", ""))
-            name = f"{house} {road}".strip() or f"{suburb}, {city}".strip()
-            if not name or name == ",":
-                name = "Your Location"
-            st.session_state.location_name = name
+            province = addr.get("province", addr.get("state", ""))
+            
+            parts = [p for p in [house, road, suburb, city, province] if p]
+            full_name = ", ".join(parts) if parts else "Your Location"
+            
+            st.session_state.location_name = full_name
             st.session_state.lat = lat
             st.session_state.lon = lon
-            status.success(f"**Found: {name}**")
+            status.success(f"**Found: {full_name}**")
             st.experimental_set_query_params()
             st.session_state.gps_active = False
         except:
-            status.error("Could not find street.")
+            status.error("Could not find address.")
             st.session_state.gps_active = False
 
-# === SEARCH ===
+# === SEARCH (FULL ADDRESS) ===
 with col_search:
     search_query = st.text_input(
-        "Or search street/suburb", placeholder="Clivia Street, Nelspruit...", key="search_input"
+        "Or search street/suburb", placeholder="114 Clivia Street, Nelspruit...", key="search_input"
     )
 
 if search_query and len(search_query) > 2:
-    with st.spinner("Searching streets..."):
+    with st.spinner("Searching full addresses..."):
         try:
             url = "https://nominatim.openstreetmap.org/search"
             params = {
@@ -98,13 +99,15 @@ if search_query and len(search_query) > 2:
             seen = set()
             for r in results:
                 addr = r.get("address", {})
-                road = addr.get("road", addr.get("pedestrian", ""))
                 house = addr.get("house_number", "")
-                suburb = addr.get("suburb", addr.get("neighbourhood", ""))
+                road = addr.get("road", addr.get("pedestrian", ""))
+                suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
                 city = addr.get("city", addr.get("town", ""))
-                full = f"{house} {road}".strip()
-                if not full:
-                    full = f"{suburb}, {city}".strip()
+                province = addr.get("province", addr.get("state", ""))
+                
+                parts = [p for p in [house, road, suburb, city, province] if p]
+                full = ", ".join(parts)
+                
                 if full and full not in seen and "ward" not in full.lower():
                     seen.add(full)
                     options.append((full, float(r["lat"]), float(r["lon"])))
@@ -123,7 +126,7 @@ if search_query and len(search_query) > 2:
                             st.success(f"**Selected: {name}**")
                             break
             else:
-                st.warning("No streets found. Try 'Clivia Street'.")
+                st.warning("No full addresses found. Try '114 Clivia Street'.")
         except:
             st.error("Search failed.")
 
@@ -174,16 +177,16 @@ def get_power():
 
 # === CALCULATIONS ===
 avg_ghi = df['Solar Yield (W/m²)'].mean()
-daily_solar_kwh = (avg_ghi / 1000) * 5 * 5  # 5kW system, 5 peak hours
+daily_solar_kwh = (avg_ghi / 1000) * 5 * 5
 total_solar_kwh = daily_solar_kwh * days
-used_kwh = 5 * 6 * days  # 6 hrs/day geyser
+used_kwh = 5 * 6 * days
 saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * 2.50
 weekly_savings = saved_r / days
 
 next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
-best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")  # FIXED: Added '('
+best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
 # === GRAPH ===
 fig = px.line(df, x='Time', y='Solar Yield (W/m²)', title=f"{days}-Day AI Forecast")
@@ -192,7 +195,7 @@ fig.update_layout(height=450, xaxis=dict(rangeselector=dict(buttons=[
 ]), rangeslider=dict(visible=True)))
 st.plotly_chart(fig, use_container_width=True)
 
-# === CONTROL BUTTON ===
+# === CONTROL ===
 if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
     power = get_power()
     if power > 800:
