@@ -173,16 +173,26 @@ weekly_savings = saved_r / days
 next_24h = df.head(24)
 peak_today = next_24h[next_24h['Solar Yield (W/m²)'] > 800]
 best_time_today = None
-if not peak_today.empty:
-    best_hour = peak_today['Solar Yield (W/m²)'].idxmax()
-    best_time_today = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+best_start = None
+best_end = None
 
-# === NEXT GEYSER ON (IF LOW SUN) ===
+if not peak_today.empty:
+    # Find longest continuous block > 800
+    peak_today['block'] = (peak_today['Solar Yield (W/m²)'] <= 800).cumsum()
+    blocks = peak_today.groupby('block').size()
+    if not blocks.empty:
+        best_block = blocks.idxmax()
+        block_times = peak_today[peak_today['block'] == best_block]['Time']
+        best_start = block_times.iloc[0].strftime("%I:%M %p")
+        best_end = block_times.iloc[-1].strftime("%I:%M %p")
+        best_time_today = f"{best_start} – {best_end}"
+
+# === NEXT GEYSER ON ===
 current_power = get_power()
 next_on_msg = ""
+precharge_msg = ""
 
 if current_power <= 800:
-    # Look for next 800+ W/m² in next 7 days
     future = df[df['Time'] > datetime.now()]
     strong_sun = future[future['Solar Yield (W/m²)'] > 800]
     if not strong_sun.empty:
@@ -193,6 +203,10 @@ if current_power <= 800:
             next_on_msg = f"**Next ON: {next_time.strftime('%d %b, %I:%M %p')}**"
     else:
         next_on_msg = "**No strong sun in 7 days — using grid backup**"
+
+# === PRE-CHARGE MESSAGE (HOT AT 5 PM) ===
+if best_time_today:
+    precharge_msg = f"**Tank pre-charged {best_time_today} → Hot water ready by 5 PM**"
 
 # === GRAPH ===
 fig = px.line(df, x='Time', y='Solar Yield (W/m²)', title=f"{days}-Day AI Forecast")
@@ -207,9 +221,13 @@ if st.button("Simulate Geyser Control", type="primary", use_container_width=True
     if current_power > 800:
         st.success("GEYSER ON — 100% Solar!")
         st.success("SMS: Geyser ON — 2hr hot water (free!)")
+        if precharge_msg:
+            st.success(precharge_msg)
     else:
         st.warning("Geyser OFF — Low sun")
         st.info(next_on_msg)
+        if best_time_today:
+            st.success(precharge_msg)
 
 # === METRICS ===
 col1, col2 = st.columns(2)
@@ -223,9 +241,12 @@ with col2:
     st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
     st.metric("Current Solar", f"{current_power}W")
 
-# === NEXT ON DISPLAY ===
+# === DISPLAY MESSAGES ===
 if next_on_msg and current_power <= 800:
     st.warning(next_on_msg)
+
+if precharge_msg:
+    st.success(precharge_msg)
 
 st.info(f"**AI says: Save R{saved_r:.0f} in {days} days!**")
 st.caption("© 2025 SolarcallAI | info@solarcallai.co.za")
