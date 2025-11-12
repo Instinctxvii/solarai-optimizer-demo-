@@ -7,115 +7,125 @@ import requests
 import time
 import random
 
-# === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
 
-# === REFRESH BUTTON ===
+# === REFRESH ===
 if st.button("Refresh Demo", type="primary", use_container_width=True):
     st.success("Refreshing...")
     time.sleep(1)
     st.rerun()
 
-# === TITLE ===
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === LOCATION SEARCH ===
+# === LOCATION INPUT ===
 st.markdown("### Enter Your Location")
 
 col_auto, col_search = st.columns([1, 3])
+
 with col_auto:
     if st.button("Use My Location", type="secondary", use_container_width=True):
         st.session_state.gps_active = True
         st.rerun()
 
-# === GPS ===
+# === GPS (FIXED) ===
 if st.session_state.get("gps_active", False):
     status = st.empty()
-    status.markdown("**Detecting GPS...**")
+    status.markdown("**Finding your street...**")
 
-    location_js = """
+    js = """
     <script>
     if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition(
-            function(pos) {
+            pos => {
                 const lat = pos.coords.latitude;
                 const lon = pos.coords.longitude;
-                window.location.href = window.location.href.split('?')[0] + '?lat=' + lat + '&lon=' + lon;
+                window.location.href = `?lat=${lat}&lon=${lon}`;
             },
-            function() {
-                window.parent.postMessage({error: "Failed"}, "*");
-            },
-            { enableHighAccuracy: true, timeout: 5000 }
+            () => window.parent.postMessage({error: "denied"}, "*"),
+            { enableHighAccuracy: true, timeout: 10000 }
         );
     }
     </script>
     """
-    st.components.v1.html(location_js, height=0)
+    st.components.v1.html(js, height=0)
 
     params = st.experimental_get_query_params()
     if "lat" in params and "lon" in params:
         try:
             lat, lon = float(params["lat"][0]), float(params["lon"][0])
-            response = requests.get(
-                f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json",
-                headers={"User-Agent": "SolarcallAI/1.0"}, timeout=5
-            )
-            data = response.json()
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1"
+            data = requests.get(url, headers={"User-Agent": "SolarcallAI/1.0"}, timeout=10).json()
             addr = data.get("address", {})
-            suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
+            road = addr.get("road", addr.get("pedestrian", ""))
+            house = addr.get("house_number", "")
+            suburb = addr.get("suburb", addr.get("neighbourhood", ""))
             city = addr.get("city", addr.get("town", ""))
-            province = addr.get("province", addr.get("state", ""))
-            name = f"{suburb or city}, {city or province}".strip(", ")
+            name = f"{house} {road}".strip() or f"{suburb}, {city}".strip()
+            if not name or name == ",":
+                name = "Your Location"
             st.session_state.location_name = name
             st.session_state.lat = lat
             st.session_state.lon = lon
-            status.success(f"**Detected: {name}**")
+            status.success(f"**Found: {name}**")
             st.experimental_set_query_params()
             st.session_state.gps_active = False
         except:
-            status.error("Location failed.")
+            status.error("Could not find street.")
             st.session_state.gps_active = False
 
-# === SEARCH ===
+# === SEARCH (FIXED: UNIQUE STREETS ONLY) ===
 with col_search:
     search_query = st.text_input(
-        "Or search suburb", placeholder="Nelspruit, Soweto...", key="search_input"
+        "Or search street/suburb", placeholder="Clivia Street, Nelspruit...", key="search_input"
     )
 
 if search_query and len(search_query) > 2:
-    with st.spinner("Searching..."):
+    with st.spinner("Searching streets..."):
         try:
-            response = requests.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "addressdetails": 1},
-                headers={"User-Agent": "SolarcallAI/1.0"}, timeout=5
-            )
-            results = response.json()
-            if results:
-                options = []
-                for r in results:
-                    addr = r.get("address", {})
-                    suburb = addr.get("suburb", addr.get("neighbourhood", ""))
-                    city = addr.get("city", addr.get("town", ""))
-                    province = addr.get("province", "")
-                    name = f"{suburb or city}, {city or province}".strip(", ")
-                    options.append((name, float(r["lat"]), float(r["lon"])))
-                selected = st.selectbox("Select:", [""] + [opt[0] for opt in options], key="location_select")
+            url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                "q": search_query,
+                "format": "json",
+                "limit": 10,
+                "countrycodes": "za",
+                "addressdetails": 1
+            }
+            results = requests.get(url, params=params, headers={"User-Agent": "SolarcallAI/1.0"}, timeout=10).json()
+            options = []
+            seen = set()
+            for r in results:
+                addr = r.get("address", {})
+                road = addr.get("road", addr.get("pedestrian", ""))
+                house = addr.get("house_number", "")
+                suburb = addr.get("suburb", addr.get("neighbourhood", ""))
+                city = addr.get("city", addr.get("town", ""))
+                full = f"{house} {road}".strip()
+                if not full:
+                    full = f"{suburb}, {city}".strip()
+                if full and full not in seen and "ward" not in full.lower():
+                    seen.add(full)
+                    options.append((full, float(r["lat"]), float(r["lon"])))
+            if options:
+                selected = st.selectbox(
+                    "Select your address:",
+                    [""] + [opt[0] for opt in options],
+                    key="location_select"
+                )
                 if selected:
                     for name, lat, lon in options:
                         if name == selected:
                             st.session_state.location_name = name
                             st.session_state.lat = lat
                             st.session_state.lon = lon
-                            st.success(f"Selected: {name}")
+                            st.success(f"**Selected: {name}**")
                             break
             else:
-                st.warning("No results.")
+                st.warning("No streets found. Try 'Clivia Street'.")
         except:
             st.error("Search failed.")
 
-# Fallback
+# === FALLBACK ===
 if 'location_name' not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
@@ -155,43 +165,30 @@ def get_forecast(lat, lon, days=14):
 
 df = get_forecast(st.session_state.lat, st.session_state.lon, days=days)
 
-# === SIMULATED POWER ===
-def get_power():
-    hour = datetime.now().hour
-    return random.randint(850, 1200) if 11 <= hour <= 14 else random.randint(100, 500)
-
-# === SIDEBAR ===
-st.sidebar.header("Your Setup")
-system_size_kw = st.sidebar.slider("Panel Size (kW)", 1, 10, 5)
-hours_used_per_day = st.sidebar.slider("Geyser Use (hrs/day)", 4, 12, 6)
-tariff_per_kwh = st.sidebar.number_input("Cost (R/kWh)", 2.0, 6.0, 2.50)
-
-# === CALCULATIONS (FIXED) ===
+# === CALCULATIONS ===
 avg_ghi = df['Solar Yield (W/m²)'].mean()
-daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
+daily_solar_kwh = (avg_ghi / 1000) * 5 * 5  # 5kW system
 total_solar_kwh = daily_solar_kwh * days
-used_kwh = system_size_kw * hours_used_per_day * days
+used_kwh = 5 * 6 * days  # 6 hrs/day
 saved_kwh = min(total_solar_kwh, used_kwh)
-saved_r = saved_kwh * tariff_per_kwh
+saved_r = saved_kwh * 2.50
 weekly_savings = saved_r / days
 
 next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
-best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+best_time = pd.Timestamp	df.loc[best_hour, 'Time']).strftime("%I:%M %p")
 
 # === GRAPH ===
-fig = px.line(
-    df, x='Time', y='Solar Yield (W/m²)',
-    title=f"{days}-Day AI Solar Forecast",
-    labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'}
-)
-fig.update_layout(height=450, hovermode='x unified', xaxis=dict(rangeselector=dict(buttons=[
+fig = px.line(df, x='Time', y='Solar Yield (W/m²)', title=f"{days}-Day AI Forecast")
+fig.update_layout(height=450, xaxis=dict(rangeselector=dict(buttons=[
     dict(count=1, label="1d", step="day"), dict(count=7, label="7d", step="day"), dict(step="all")
-]), rangeslider=dict(visible=True), type="date"))
+]), rangeslider=dict(visible=True)))
 st.plotly_chart(fig, use_container_width=True)
 
-if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
-    if get_power() > 800:
+# === CONTROL ===
+if st.button("Simulate Geyser", type="primary", use_container_width=True):
+    power = get_power() if 'get_power' in globals() else random.randint(100, 1200)
+    if power > 800:
         st.success("GEYSER ON — 100% Solar!")
         st.success("SMS: Geyser ON — 2hr hot water (free!)")
     else:
@@ -200,11 +197,11 @@ if st.button("Simulate Geyser Control", type="primary", use_container_width=True
 # === METRICS ===
 col1, col2 = st.columns(2)
 with col1:
-    st.metric("Best Charge Time", best_time)
-    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
+    st.metric("Best Charge", best_time)
+    st.metric("Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
 with col2:
-    st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Current Solar", f"{get_power()}W")
+    st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh")
+    st.metric("Current", f"{random.randint(100,1200)}W")
 
 st.info(f"**AI says: Charge at {best_time} — Save R{saved_r:.0f} in {days} days!**")
 st.caption("© 2025 SolarcallAI | info@solarcallai.co.za")
