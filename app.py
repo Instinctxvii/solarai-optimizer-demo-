@@ -7,6 +7,7 @@ import requests
 import time
 import random
 
+# === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
 
 # === REFRESH ===
@@ -15,10 +16,11 @@ if st.button("Refresh Demo", type="primary", use_container_width=True):
     time.sleep(1)
     st.rerun()
 
+# === TITLE ===
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === LOCATION INPUT ===
+# === LOCATION ===
 st.markdown("### Enter Your Location")
 
 col_auto, col_search = st.columns([1, 3])
@@ -28,7 +30,7 @@ with col_auto:
         st.session_state.gps_active = True
         st.rerun()
 
-# === GPS (FIXED) ===
+# === GPS ===
 if st.session_state.get("gps_active", False):
     status = st.empty()
     status.markdown("**Finding your street...**")
@@ -74,7 +76,7 @@ if st.session_state.get("gps_active", False):
             status.error("Could not find street.")
             st.session_state.gps_active = False
 
-# === SEARCH (FIXED: UNIQUE STREETS ONLY) ===
+# === SEARCH ===
 with col_search:
     search_query = st.text_input(
         "Or search street/suburb", placeholder="Clivia Street, Nelspruit...", key="search_input"
@@ -165,18 +167,23 @@ def get_forecast(lat, lon, days=14):
 
 df = get_forecast(st.session_state.lat, st.session_state.lon, days=days)
 
+# === POWER SIMULATION ===
+def get_power():
+    hour = datetime.now().hour
+    return random.randint(850, 1200) if 11 <= hour <= 14 else random.randint(100, 500)
+
 # === CALCULATIONS ===
 avg_ghi = df['Solar Yield (W/m²)'].mean()
-daily_solar_kwh = (avg_ghi / 1000) * 5 * 5  # 5kW system
+daily_solar_kwh = (avg_ghi / 1000) * 5 * 5  # 5kW system, 5 peak hours
 total_solar_kwh = daily_solar_kwh * days
-used_kwh = 5 * 6 * days  # 6 hrs/day
+used_kwh = 5 * 6 * days  # 6 hrs/day geyser
 saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * 2.50
 weekly_savings = saved_r / days
 
 next_24h = df.head(24)
 best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
-best_time = pd.Timestamp	df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")  # FIXED: Added '('
 
 # === GRAPH ===
 fig = px.line(df, x='Time', y='Solar Yield (W/m²)', title=f"{days}-Day AI Forecast")
@@ -185,9 +192,9 @@ fig.update_layout(height=450, xaxis=dict(rangeselector=dict(buttons=[
 ]), rangeslider=dict(visible=True)))
 st.plotly_chart(fig, use_container_width=True)
 
-# === CONTROL ===
-if st.button("Simulate Geyser", type="primary", use_container_width=True):
-    power = get_power() if 'get_power' in globals() else random.randint(100, 1200)
+# === CONTROL BUTTON ===
+if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
+    power = get_power()
     if power > 800:
         st.success("GEYSER ON — 100% Solar!")
         st.success("SMS: Geyser ON — 2hr hot water (free!)")
@@ -197,11 +204,11 @@ if st.button("Simulate Geyser", type="primary", use_container_width=True):
 # === METRICS ===
 col1, col2 = st.columns(2)
 with col1:
-    st.metric("Best Charge", best_time)
-    st.metric("Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
+    st.metric("Best Charge Time", best_time)
+    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
 with col2:
-    st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh")
-    st.metric("Current", f"{random.randint(100,1200)}W")
+    st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
+    st.metric("Current Solar", f"{get_power()}W")
 
 st.info(f"**AI says: Charge at {best_time} — Save R{saved_r:.0f} in {days} days!**")
 st.caption("© 2025 SolarcallAI | info@solarcallai.co.za")
