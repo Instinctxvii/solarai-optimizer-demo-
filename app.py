@@ -6,8 +6,6 @@ from datetime import datetime, timedelta
 import requests
 import time
 import random
-from requests.adapters import HTTPAdapter
-from urllib3.util import Retry
 
 # === CONFIG ===
 st.set_page_config(page_title="SolarcallAI™", layout="wide")
@@ -22,88 +20,112 @@ if st.button("Refresh Demo (See Latest Changes)", type="primary", use_container_
 st.title("SolarcallAI™")
 st.markdown("**AI Solar Geyser Control | R149/month | R0 Upfront**")
 
-# === SAFE NOMINATIM SEARCH (FIXED) ===
-def safe_nominatim_search(query):
-    if not query or len(query) < 2:
-        return []
-    
-    session = requests.Session()
-    retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
-    session.mount("https://", HTTPAdapter(max_retries=retry))
-    
-    try:
-        response = session.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": query,
-                "format": "json",
-                "limit": 10,
-                "countrycodes": "za",
-                "addressdetails": 1
+# === LOCATION SEARCH ===
+st.markdown("### Enter Your Location")
+
+col_auto, col_search = st.columns([1, 3])
+with col_auto:
+    if st.button("Use My Location", type="secondary", use_container_width=True):
+        st.session_state.gps_active = True
+        st.rerun()
+
+# === GPS (NO LOOP) ===
+if st.session_state.get("gps_active", False):
+    status_placeholder = st.empty()
+    status_placeholder.markdown("**Detecting GPS...**")
+
+    # JS for GPS (no rerun inside)
+    location_js = """
+    <script>
+    if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+            function(position) {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                const url = window.location.href.split('?')[0] + '?lat=' + lat + '&lon=' + lon;
+                window.location.href = url;
             },
-            headers={"User-Agent": "SolarcallAI/1.0 (+info@solarcallai.co.za)"},
-            timeout=10
-        )
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Search temporarily unavailable. Try again in 5 seconds.")
-        time.sleep(1)
-        return []
+            function(error) {
+                window.parent.postMessage({error: error.message}, "*");
+            },
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 }
+        );
+    } else {
+        window.parent.postMessage({error: "Geolocation not supported"}, "*");
+    }
+    </script>
+    """
+    st.components.v1.html(location_js, height=0)
 
-# === FULL SA STREET + SUBURB SEARCH ===
-st.markdown("### Enter Your Street or Suburb")
-
-search_query = st.text_input(
-    "Search any street or suburb in South Africa (e.g., Clivia, 114 Clivia Street, Soweto)",
-    placeholder="Type street or suburb...",
-    key="search_input"
-)
-
-# === LIVE SEARCH LOGIC (FIXED) ===
-if search_query and len(search_query) > 2:
-    with st.spinner("Searching South Africa..."):
-        results = safe_nominatim_search(search_query)
-    
-    if results:
-        options = []
-        seen = set()
-        for r in results:
-            addr = r.get("address", {})
-            house = addr.get("house_number", "")
-            road = addr.get("road", addr.get("pedestrian", ""))
+    # Capture (no loop)
+    query_params = st.experimental_get_query_params()
+    if "lat" in query_params and "lon" in query_params:
+        lat = float(query_params["lat"][0])
+        lon = float(query_params["lon"][0])
+        try:
+            response = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json", timeout=5)
+            data = response.json()
+            addr = data.get("address", {})
             suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
-            city = addr.get("city", addr.get("town", addr.get("municipality", "")))
+            city = addr.get("city", addr.get("town", ""))
             province = addr.get("province", addr.get("state", ""))
-            
-            parts = [p for p in [house, road, suburb, city, province] if p]
-            display = ", ".join(parts) if parts else r.get("display_name", "Unknown")
-            
-            if display not in seen:
-                seen.add(display)
-                lat = float(r["lat"])
-                lon = float(r["lon"])
-                options.append((display, lat, lon))
-        
-        if options:
-            selected = st.selectbox(
-                "Select your location:",
-                [""] + [opt[0] for opt in options],
-                key="location_select"
-            )
-            if selected:
-                for name, lat, lon in options:
-                    if name == selected:
-                        st.session_state.location_name = name
-                        st.session_state.lat = lat
-                        st.session_state.lon = lon
-                        st.success(f"Selected: {name}")
-                        st.rerun()
-                        break
-    else:
-        st.warning("No SA locations found. Try '114 Clivia Street' or 'Soweto'.")
+            location_name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
+            st.session_state.location_name = location_name
+            st.session_state.lat = lat
+            st.session_state.lon = lon
+            status_placeholder.success(f"**Detected: {location_name}**")
+            st.experimental_set_query_params()
+            st.session_state.gps_active = False
+        except:
+            status_placeholder.error("Could not resolve location.")
+            st.experimental_set_query_params()
+            st.session_state.gps_active = False
+    elif "error" in st.session_state:
+        status_placeholder.error(f"GPS Error: {st.session_state.error}")
+        st.session_state.gps_active = False
 
-# === FALLBACK LOCATION ===
+# === SEARCH BOX ===
+with col_search:
+    search_query = st.text_input(
+        "Or search suburb (e.g., Nelspruit, Soweto, Kimberley)",
+        placeholder="Type suburb name...",
+        key="search_input"
+    )
+
+if search_query and len(search_query) > 2:
+    with st.spinner("Searching..."):
+        try:
+            response = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": search_query, "format": "json", "limit": 5, "countrycodes": "za", "addressdetails": 1},
+                headers={"User-Agent": "SolarcallAI/1.0"},
+                timeout=5
+            )
+            results = response.json()
+            if results:
+                options = []
+                for r in results:
+                    addr = r.get("address", {})
+                    suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", addr.get("hamlet", ""))))
+                    city = addr.get("city", addr.get("town", ""))
+                    province = addr.get("province", addr.get("state", ""))
+                    name = f"{suburb or city}, {city or province}, {province or 'South Africa'}".strip(", ")
+                    options.append((name, float(r["lat"]), float(r["lon"])))
+                selected = st.selectbox("Select location:", [""] + [opt[0] for opt in options], key="location_select")
+                if selected:
+                    for name, lat, lon in options:
+                        if name == selected:
+                            st.session_state.location_name = name
+                            st.session_state.lat = lat
+                            st.session_state.lon = lon
+                            st.success(f"Selected: {name}")
+                            break
+            else:
+                st.warning("No SA locations found.")
+        except:
+            st.error("Search failed. Check connection.")
+
+# Fallback
 if 'location_name' not in st.session_state:
     st.session_state.location_name = "Limpopo (Polokwane)"
     st.session_state.lat = -23.8962
@@ -173,60 +195,4 @@ avg_ghi = df['Solar Yield (W/m²)'].mean()
 daily_solar_kwh = (avg_ghi / 1000) * system_size_kw * 5
 total_solar_kwh = daily_solar_kwh * days
 used_kwh = system_size_kw * hours_used_per_day * days
-saved_kwh = min(total_solar_kwh, used_kwh)
-saved_r = saved_kwh * tariff_per_kwh
-weekly_savings = saved_r / days
-
-next_24h = df.head(24)
-best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
-best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
-
-# === INTERACTIVE GRAPH ===
-fig = px.line(
-    df, x='Time', y='Solar Yield (W/m²)',
-    title=f"{days}-Day AI Solar Forecast — {st.session_state.location_name}",
-    labels={'Solar Yield (W/m²)': 'Sunlight (W/m²)'}
-)
-fig.update_layout(
-    height=450,
-    hovermode='x unified',
-    dragmode='zoom',
-    title_x=0.5,
-    xaxis=dict(
-        rangeselector=dict(buttons=[
-            dict(count=1, label="1d", step="day", stepmode="backward"),
-            dict(count=7, label="7d", step="day", stepmode="backward"),
-            dict(step="all")
-        ]),
-        rangeslider=dict(visible=True),
-        type="date"
-    )
-)
-
-config = {
-    'toImageButtonOptions': {
-        'format': 'png',
-        'filename': f'SolarcallAI_{st.session_state.location_name.replace(", ", "_").replace(" ", "_")}'
-    },
-    'displaylogo': False
-}
-
-st.plotly_chart(fig, use_container_width=True, config=config)
-
-if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
-    control_geyser()
-
-st.markdown("**Controls:** Drag to zoom • Double-tap to reset • Save PNG (top-right)")
-
-# === INSIGHTS ===
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("Best Charge Time", best_time)
-    st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
-with col2:
-    st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Current Solar", f"{get_current_power()}W", "Peak Sun")
-
-st.info(f"AI says: **Charge at {best_time}** in **{st.session_state.location_name}** — Save R{saved_r:.0f} in {days} days!")
-
-st.caption("© 2025 SolarcallAI (Pty) Ltd | info@solarcallai.co.za | Powered by Open-Meteo")
+saved_kwh
