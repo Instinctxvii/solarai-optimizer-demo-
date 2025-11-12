@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta
 import requests
 import time
 import random
@@ -28,10 +28,10 @@ with col_auto:
         st.session_state.gps_active = True
         st.rerun()
 
-# === GPS (FULL ADDRESS) ===
+# === GPS ===
 if st.session_state.get("gps_active", False):
     status = st.empty()
-    status.markdown("**Finding your full address...**")
+    status.markdown("**Finding your address...**")
 
     js = """
     <script>
@@ -57,43 +57,34 @@ if st.session_state.get("gps_active", False):
             url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1"
             data = requests.get(url, headers={"User-Agent": "SolarcallAI/1.0"}, timeout=10).json()
             addr = data.get("address", {})
-            
             house = addr.get("house_number", "")
             road = addr.get("road", addr.get("pedestrian", ""))
-            suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
+            suburb = addr.get("suburb", addr.get("neighbourhood", ""))
             city = addr.get("city", addr.get("town", ""))
             province = addr.get("province", addr.get("state", ""))
-            
             parts = [p for p in [house, road, suburb, city, province] if p]
-            full_name = ", ".join(parts) if parts else "Your Location"
-            
-            st.session_state.location_name = full_name
+            name = ", ".join(parts) if parts else "Your Location"
+            st.session_state.location_name = name
             st.session_state.lat = lat
             st.session_state.lon = lon
-            status.success(f"**Found: {full_name}**")
+            status.success(f"**Found: {name}**")
             st.experimental_set_query_params()
             st.session_state.gps_active = False
         except:
-            status.error("Could not find address.")
+            status.error("Address not found.")
             st.session_state.gps_active = False
 
-# === SEARCH (FULL ADDRESS) ===
+# === SEARCH ===
 with col_search:
     search_query = st.text_input(
         "Or search street/suburb", placeholder="114 Clivia Street, Nelspruit...", key="search_input"
     )
 
 if search_query and len(search_query) > 2:
-    with st.spinner("Searching full addresses..."):
+    with st.spinner("Searching..."):
         try:
             url = "https://nominatim.openstreetmap.org/search"
-            params = {
-                "q": search_query,
-                "format": "json",
-                "limit": 10,
-                "countrycodes": "za",
-                "addressdetails": 1
-            }
+            params = {"q": search_query, "format": "json", "limit": 10, "countrycodes": "za", "addressdetails": 1}
             results = requests.get(url, params=params, headers={"User-Agent": "SolarcallAI/1.0"}, timeout=10).json()
             options = []
             seen = set()
@@ -101,22 +92,16 @@ if search_query and len(search_query) > 2:
                 addr = r.get("address", {})
                 house = addr.get("house_number", "")
                 road = addr.get("road", addr.get("pedestrian", ""))
-                suburb = addr.get("suburb", addr.get("neighbourhood", addr.get("village", "")))
+                suburb = addr.get("suburb", addr.get("neighbourhood", ""))
                 city = addr.get("city", addr.get("town", ""))
                 province = addr.get("province", addr.get("state", ""))
-                
                 parts = [p for p in [house, road, suburb, city, province] if p]
                 full = ", ".join(parts)
-                
                 if full and full not in seen and "ward" not in full.lower():
                     seen.add(full)
                     options.append((full, float(r["lat"]), float(r["lon"])))
             if options:
-                selected = st.selectbox(
-                    "Select your address:",
-                    [""] + [opt[0] for opt in options],
-                    key="location_select"
-                )
+                selected = st.selectbox("Select address:", [""] + [opt[0] for opt in options], key="location_select")
                 if selected:
                     for name, lat, lon in options:
                         if name == selected:
@@ -126,7 +111,7 @@ if search_query and len(search_query) > 2:
                             st.success(f"**Selected: {name}**")
                             break
             else:
-                st.warning("No full addresses found. Try '114 Clivia Street'.")
+                st.warning("No address found.")
         except:
             st.error("Search failed.")
 
@@ -184,12 +169,34 @@ saved_kwh = min(total_solar_kwh, used_kwh)
 saved_r = saved_kwh * 2.50
 weekly_savings = saved_r / days
 
+# === BEST TIME TODAY ===
 next_24h = df.head(24)
-best_hour = next_24h['Solar Yield (W/m²)'].idxmax()
-best_time = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+peak_today = next_24h[next_24h['Solar Yield (W/m²)'] > 800]
+best_time_today = None
+if not peak_today.empty:
+    best_hour = peak_today['Solar Yield (W/m²)'].idxmax()
+    best_time_today = pd.Timestamp(df.loc[best_hour, 'Time']).strftime("%I:%M %p")
+
+# === NEXT GEYSER ON (IF LOW SUN) ===
+current_power = get_power()
+next_on_msg = ""
+
+if current_power <= 800:
+    # Look for next 800+ W/m² in next 7 days
+    future = df[df['Time'] > datetime.now()]
+    strong_sun = future[future['Solar Yield (W/m²)'] > 800]
+    if not strong_sun.empty:
+        next_time = strong_sun.iloc[0]['Time']
+        if next_time.date() == datetime.now().date():
+            next_on_msg = f"**Next ON: Today {next_time.strftime('%I:%M %p')}**"
+        else:
+            next_on_msg = f"**Next ON: {next_time.strftime('%d %b, %I:%M %p')}**"
+    else:
+        next_on_msg = "**No strong sun in 7 days — using grid backup**"
 
 # === GRAPH ===
 fig = px.line(df, x='Time', y='Solar Yield (W/m²)', title=f"{days}-Day AI Forecast")
+fig.add_hline(y=800, line_dash="dash", line_color="orange", annotation_text="Geyser ON Threshold")
 fig.update_layout(height=450, xaxis=dict(rangeselector=dict(buttons=[
     dict(count=1, label="1d", step="day"), dict(count=7, label="7d", step="day"), dict(step="all")
 ]), rangeslider=dict(visible=True)))
@@ -197,21 +204,28 @@ st.plotly_chart(fig, use_container_width=True)
 
 # === CONTROL ===
 if st.button("Simulate Geyser Control", type="primary", use_container_width=True):
-    power = get_power()
-    if power > 800:
+    if current_power > 800:
         st.success("GEYSER ON — 100% Solar!")
         st.success("SMS: Geyser ON — 2hr hot water (free!)")
     else:
         st.warning("Geyser OFF — Low sun")
+        st.info(next_on_msg)
 
 # === METRICS ===
 col1, col2 = st.columns(2)
 with col1:
-    st.metric("Best Charge Time", best_time)
+    if best_time_today:
+        st.metric("Best Charge Today", best_time_today)
+    else:
+        st.metric("Today", "Low Sun", "No ON time")
     st.metric("Money Saved", f"R{saved_r:.0f}", f"R{weekly_savings:.0f}/week")
 with col2:
     st.metric(f"{days}-Day Solar", f"{total_solar_kwh:.1f} kWh", f"{daily_solar_kwh:.1f} kWh/day")
-    st.metric("Current Solar", f"{get_power()}W")
+    st.metric("Current Solar", f"{current_power}W")
 
-st.info(f"**AI says: Charge at {best_time} — Save R{saved_r:.0f} in {days} days!**")
+# === NEXT ON DISPLAY ===
+if next_on_msg and current_power <= 800:
+    st.warning(next_on_msg)
+
+st.info(f"**AI says: Save R{saved_r:.0f} in {days} days!**")
 st.caption("© 2025 SolarcallAI | info@solarcallai.co.za")
